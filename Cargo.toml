@@ -1,0 +1,15 @@
+[package]
+name = "certkit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+rsa = { version = "0.9" }
+p256 = { version = "0.13", features = ["ecdsa"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+sha2 = { version = "0.10", default-features = false, features = ["oid"] }
+rand_core = { version = "0.6" }
+der = "0.7"
+time = "0.3"
+pem = "3"
