@@ -1,4 +1,5 @@
 pub mod cert;
+pub mod error;
+pub mod issuer;
 pub mod key;
-pub mod pem_utils;
-pub mod pki;
+pub mod tbs_certificate;

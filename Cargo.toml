@@ -2,14 +2,30 @@
 name = "certkit"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
-anyhow = "1"
+bon = "3"
+const-oid = { version = "0.9.6", features = ["db"] }
 rsa = { version = "0.9" }
-p256 = { version = "0.13", features = ["ecdsa"] }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+p384 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+p521 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+ecdsa = { version = "0.16", features = ["verifying"] }
+ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8", "pem"] }
 sha2 = { version = "0.10", default-features = false, features = ["oid"] }
 rand_core = { version = "0.6" }
 der = "0.7"
 time = "0.3"
 pem = "3"
+x509-cert = "0.2.5"
+pkcs8 = "0.10.2"
+rand = "0.9.1"
+base64 = "0.22.1"
+sha1 = "0.10"
+thiserror = "1.0"
+regex = "1.7"
+
+[dev-dependencies]
+openssl = { version = "0.10" }
+botan = { version = "0.11", features = ["vendored"] }

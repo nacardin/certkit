@@ -1,3 +1,6 @@
 /target
+/work
 
 Cargo.lock
+
+.debug_certs
