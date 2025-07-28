@@ -8,7 +8,7 @@ repository = "https://github.com/nacardin/certkit.git"
 homepage = "https://github.com/nacardin/certkit"
 documentation = "https://docs.rs/certkit"
 readme = "README.md"
-keywords = ["x509", "certificate", "crypto", "pki", "rustcrypto", "tls", "mtls"]
+keywords = ["x509", "certificate", "crypto", "pki", "tls"]
 categories = ["cryptography", "authentication"]
 authors = ["Nick Cardin <nick@cardin.email>"]
 
