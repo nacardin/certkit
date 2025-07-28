@@ -57,6 +57,7 @@ fn test_openssl_validate_cert() {
 
     // Updated test to validate static fields and use partial matching for dynamic fields
     let output_text = String::from_utf8_lossy(&output.stdout);
+    println!("output_text {output_text}");
 
     // Validate static fields
     assert!(
@@ -64,7 +65,7 @@ fn test_openssl_validate_cert() {
         "Issuer field is incorrect"
     );
     assert!(
-        output_text.contains("Subject: C=, ST=, L=, O=, OU=, CN=, server.myca.local"),
+        output_text.contains("Subject: C=, ST=, L=, O=, OU=, CN=server.myca.local"),
         "Subject field is incorrect"
     );
     assert!(

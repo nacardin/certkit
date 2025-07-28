@@ -53,7 +53,7 @@ fn generate_server_cert() -> Result<()> {
     };
     let server_cert = ca_cert_with_key.issue(&server_cert_info, validity);
 
-    eprintln!("Server Certificate: {:?}", server_cert);
+    eprintln!("Server Certificate: {server_cert:?}");
     let server_cert_pem = server_cert.to_pem().unwrap();
 
     use std::io::Write;
@@ -92,7 +92,7 @@ fn generate_client_cert() -> Result<()> {
     };
     let client_cert = ca_cert_with_key.issue(&client_cert_info, validity);
 
-    eprintln!("Client Certificate: {:?}", client_cert);
+    eprintln!("Client Certificate: {client_cert:?}");
     let client_cert_pem = client_cert.to_pem().unwrap();
 
     use std::io::Write;
