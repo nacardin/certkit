@@ -3,6 +3,14 @@ name = "certkit"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "A pure Rust library for X.509 certificate management, creation, and validation, supporting RSA, ECDSA, and Ed25519 keys, with no OpenSSL or ring dependencies."
+repository = "https://github.com/nacardin/certkit"
+homepage = "https://github.com/nacardin/certkit"
+documentation = "https://docs.rs/certkit"
+readme = "README.md"
+keywords = ["x509", "certificate", "crypto", "pki", "rustcrypto", "tls", "mtls"]
+categories = ["cryptography", "authentication"]
+authors = ["Nick Cardin <nick@cardin.email>"]
 
 [dependencies]
 bon = "3"
