@@ -515,6 +515,114 @@ impl Certificate {
     /// - **Internal services**: Certificates for internal-only applications
     /// - **Bootstrap certificates**: Initial certificates for certificate enrollment
     pub fn new_self_signed(cert_info: &CertificationRequestInfo, key: &KeyPair) -> Self {
+        let now = OffsetDateTime::now_utc();
+        Self::new_self_signed_with_expiration(cert_info, key, now, now + time::Duration::days(365))
+    }
+
+    /// Creates a new self-signed certificate with the specified valid times.
+    ///
+    /// Generates a self-signed X.509 certificate where the issuer and subject
+    /// are the same entity. This is commonly used for root CA certificates
+    /// or for testing purposes.
+    ///
+    /// # Certificate Properties
+    /// - **Serial Number**: Fixed value of 1
+    /// - **Version**: X.509 v3
+    /// - **Signature Algorithm**: Automatically selected based on key type
+    ///
+    /// # Arguments
+    /// * `cert_info` - The certification request information containing subject details,
+    ///   public key, extensions, and other certificate parameters
+    /// * `key` - The key pair used to sign the certificate (private key for signing,
+    ///   public key typically matches the one in cert_info)
+    ///
+    /// # Returns
+    /// A `Certificate` object representing the self-signed certificate.
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Self-Signed Certificate
+    ///
+    /// ```rust,no_run
+    /// use certkit::{
+    ///     key::KeyPair,
+    ///     cert::{Certificate, params::{CertificationRequestInfo, DistinguishedName}},
+    /// };
+    ///
+    /// # fn main() -> Result<(), certkit::error::CertKitError> {
+    /// use time::OffsetDateTime;
+    /// let key_pair = KeyPair::generate_rsa(2048)?;
+    ///
+    /// let subject = DistinguishedName::builder()
+    ///     .common_name("My Root CA".to_string())
+    ///     .organization("My Organization".to_string())
+    ///     .country("US".to_string())
+    ///     .build();
+    ///
+    /// let cert_info = CertificationRequestInfo::builder()
+    ///     .subject(subject)
+    ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
+    ///     .is_ca(true)  // Mark as CA certificate
+    ///     .build();
+    ///
+    /// let now = OffsetDateTime::now_utc();
+    ///
+    /// let root_cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365));
+    /// println!("Root CA certificate created");
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Self-Signed Certificate with Extensions
+    ///
+    /// ```rust,no_run
+    /// use certkit::{
+    ///     key::KeyPair,
+    ///     cert::{
+    ///         Certificate,
+    ///         params::{CertificationRequestInfo, DistinguishedName, ExtensionParam},
+    ///         extensions::{SubjectAltName, ToAndFromX509Extension},
+    ///     },
+    /// };
+    ///
+    /// # fn main() -> Result<(), certkit::error::CertKitError> {
+    /// use time::OffsetDateTime;
+    /// let key_pair = KeyPair::generate_ecdsa_p256();
+    ///
+    /// // Create Subject Alternative Name extension
+    /// let san = SubjectAltName {
+    ///     names: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+    /// };
+    ///
+    /// let subject = DistinguishedName::builder()
+    ///     .common_name("localhost".to_string())
+    ///     .build();
+    ///
+    /// let cert_info = CertificationRequestInfo::builder()
+    ///     .subject(subject)
+    ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
+    ///     .extensions(vec![ExtensionParam::from_extension(san, false)])
+    ///     .build();
+    ///
+    /// let now = OffsetDateTime::now_utc();
+    ///
+    /// let cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365));
+    /// println!("Self-signed certificate with SAN created");
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Use Cases
+    /// - **Root CA certificates**: Top-level certificates in a PKI hierarchy
+    /// - **Development/testing**: Quick certificate generation for testing
+    /// - **Internal services**: Certificates for internal-only applications
+    /// - **Bootstrap certificates**: Initial certificates for certificate enrollment
+    pub fn new_self_signed_with_expiration(
+        cert_info: &CertificationRequestInfo,
+        key: &KeyPair,
+        not_before: OffsetDateTime,
+        not_after: OffsetDateTime,
+    ) -> Self {
         let subject_dn = cert_info.subject.clone();
 
         // For self-signed certificates, the issuer is the same as the subject
@@ -524,9 +632,10 @@ impl Certificate {
         };
 
         let validity = params::Validity {
-            not_before: OffsetDateTime::now_utc(),
-            not_after: OffsetDateTime::now_utc() + time::Duration::days(365),
+            not_before,
+            not_after,
         };
+
         self_issuer.issue(cert_info, validity)
     }
 }
