@@ -230,7 +230,7 @@ pub trait Issuer {
         };
 
         let basic_constraints = BasicConstraints {
-            is_ca: true,
+            is_ca: cert_request.is_ca,
             max_path_length: None,
         };
 
@@ -299,8 +299,8 @@ pub trait Issuer {
             .unwrap();
 
         let cert_inner = CertificateInner {
+            signature_algorithm: tbs_cert_inner.signature.clone(),
             tbs_certificate: tbs_cert_inner,
-            signature_algorithm: public_key_info.algorithm,
             signature: der::asn1::BitString::from_bytes(&signature).unwrap(),
         };
 

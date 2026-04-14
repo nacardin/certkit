@@ -45,6 +45,8 @@ fn test_openssl_validate_cert() {
         .arg(cert_path)
         .arg("-noout")
         .arg("-text")
+        //If this is not added then the output of openssl is in the users system language which breaks this test.
+        .env("LANG", "C")
         .output()
         .expect("Failed to execute OpenSSL command");
 
@@ -60,12 +62,18 @@ fn test_openssl_validate_cert() {
     println!("output_text {output_text}");
 
     // Validate static fields
+    // Note: Different openssl versions format this field differently!
     assert!(
-        output_text.contains("Issuer: C=, ST=, L=, O=, OU=, CN=myca.local"),
+        output_text.contains("Issuer: C=, ST=, L=, O=, OU=, CN=myca.local")
+            || output_text.contains("Issuer: C = , ST = , L = , O = , OU = , CN = myca.local"),
         "Issuer field is incorrect"
     );
+
+    // Note: Different openssl versions format this field differently!
     assert!(
-        output_text.contains("Subject: C=, ST=, L=, O=, OU=, CN=server.myca.local"),
+        output_text.contains("Subject: C=, ST=, L=, O=, OU=, CN=server.myca.local")
+            || output_text
+                .contains("Subject: C = , ST = , L = , O = , OU = , CN = server.myca.local"),
         "Subject field is incorrect"
     );
     assert!(
@@ -166,9 +174,10 @@ fn test_openssl_crate_validate_cert() {
 
     // Check signature algorithm
     let sig_alg = x509.signature_algorithm().object().nid();
+
     assert_eq!(
         sig_alg,
-        openssl::nid::Nid::X9_62_ID_ECPUBLICKEY,
+        openssl::nid::Nid::ECDSA_WITH_SHA256,
         "Signature algorithm should be ecdsa-with-SHA256"
     );
 }

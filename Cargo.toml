@@ -1,6 +1,6 @@
 [package]
 name = "certkit"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A pure Rust library for X.509 certificate management, creation, and validation, supporting RSA, ECDSA, and Ed25519 keys, with no OpenSSL or ring dependencies."

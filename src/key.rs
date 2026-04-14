@@ -1,4 +1,5 @@
 use crate::error::CertKitError;
+use der::pem::LineEnding;
 pub type Result<T> = std::result::Result<T, CertKitError>;
 
 use ecdsa::VerifyingKey;
@@ -103,6 +104,7 @@ pub enum KeyPair {
     Ed25519 { signing_key: Ed25519SigningKey },
 }
 use p256::pkcs8::DecodePrivateKey;
+use pkcs8::EncodePrivateKey;
 
 impl KeyPair {
     /// Generate an RSA key pair with the specified number of bits.
@@ -348,6 +350,42 @@ impl KeyPair {
             KeyPair::Ed25519 { signing_key } => signing_key.verifying_key().to_bytes().to_vec(),
         }
     }
+
+    /// Encodes the private key in PKCS8 PEM format
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::key::KeyPair;
+    ///
+    /// fn some_func() -> Result<(), certkit::error::CertKitError> {
+    ///     let rsa_key = KeyPair::generate_rsa(2048)?;
+    ///     println!("Random RSA private key pem:\n{}", rsa_key.encode_private_key_pem().unwrap());
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn encode_private_key_pem(&self) -> Result<String> {
+        let key = (match &self {
+            KeyPair::Rsa { private, .. } => private.to_pkcs8_pem(LineEnding::default()),
+            KeyPair::EcdsaP256 { signing_key, .. } => {
+                EncodePrivateKey::to_pkcs8_pem(signing_key, LineEnding::default())
+            }
+            KeyPair::EcdsaP384 { signing_key, .. } => {
+                EncodePrivateKey::to_pkcs8_pem(signing_key, LineEnding::default())
+            }
+            KeyPair::EcdsaP521 { signing_key, .. } => {
+                EncodePrivateKey::to_pkcs8_pem(signing_key, LineEnding::default())
+            }
+            KeyPair::Ed25519 { signing_key, .. } => {
+                EncodePrivateKey::to_pkcs8_pem(signing_key, LineEnding::default())
+            }
+        })
+        .map_err(|e| e.to_string())
+        .map_err(CertKitError::EncodingError)?;
+
+        Ok(key.as_str().to_string())
+    }
+
     /// Imports a key pair from DER-encoded data.
     ///
     /// Attempts to decode DER-encoded private key data and create a `KeyPair`.
