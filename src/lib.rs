@@ -179,6 +179,15 @@
 //! - [`error`]: Comprehensive error types and handling
 //! - [`tbs_certificate`]: Low-level certificate structure manipulation
 
+#[cfg(not(any(
+    feature = "ed25519",
+    feature = "rsa",
+    feature = "p256",
+    feature = "p384",
+    feature = "p521"
+)))]
+compile_error!("Please enable at least 1 cryptographic algorithm to use certkit");
+
 pub mod cert;
 pub mod error;
 pub mod issuer;

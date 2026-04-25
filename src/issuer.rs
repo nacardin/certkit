@@ -212,10 +212,15 @@ pub trait Issuer {
     /// ```
     fn issue(&self, cert_request: &CertificationRequestInfo, validity: Validity) -> Certificate {
         let signature_algo = match self.signing_key() {
+            #[cfg(feature = "rsa")]
             KeyPair::Rsa { .. } => SignatureAlgorithm::Sha256WithRSA,
+            #[cfg(feature = "p256")]
             KeyPair::EcdsaP256 { .. } => SignatureAlgorithm::Sha256WithECDSA,
+            #[cfg(feature = "p384")]
             KeyPair::EcdsaP384 { .. } => SignatureAlgorithm::Sha256WithECDSA,
+            #[cfg(feature = "p521")]
             KeyPair::EcdsaP521 { .. } => SignatureAlgorithm::Sha256WithECDSA,
+            #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { .. } => SignatureAlgorithm::Sha256WithEdDSA,
         };
 

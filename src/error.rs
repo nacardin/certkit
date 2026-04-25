@@ -191,12 +191,14 @@ impl From<der::Error> for CertKitError {
     }
 }
 
+#[cfg(feature = "rsa")]
 impl From<rsa::Error> for CertKitError {
     fn from(err: rsa::Error) -> Self {
         CertKitError::RsaError(err.to_string())
     }
 }
 
+#[cfg(feature = "rsa")]
 impl From<rsa::pkcs1::Error> for CertKitError {
     fn from(err: rsa::pkcs1::Error) -> Self {
         CertKitError::RsaPkcs1Error(err.to_string())
