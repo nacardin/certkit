@@ -123,7 +123,10 @@ impl TbsCertificate {
             }
             #[cfg(feature = "p521")]
             PublicKey::EcdsaP521(verifying_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(crate::key::p521_public_key(
+                    verifying_key,
+                ))
+                .unwrap()
             }
             #[cfg(feature = "ed25519")]
             PublicKey::Ed25519(verifying_key) => {

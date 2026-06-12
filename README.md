@@ -9,7 +9,7 @@ A high-level Rust library providing abstractions over certificates and keys. Thi
 - Create intermediate CAs for certificate hierarchies
 - Support for multiple key types:
   - RSA
-  - ECDSA (P-256)
+  - ECDSA (P-256, P-384, P-521)
   - Ed25519
 - PEM and DER format support
 - Modern Rust implementation with strong type safety
@@ -21,8 +21,34 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-certkit = "0.1.0"
+certkit = "0.1"
 ```
+
+## Cargo features
+
+Each cryptographic algorithm is behind its own feature. All are enabled by
+default, so the default build is unchanged:
+
+| Feature   | Algorithm        | Default |
+|-----------|------------------|---------|
+| `rsa`     | RSA              | yes     |
+| `p256`    | ECDSA P-256      | yes     |
+| `p384`    | ECDSA P-384      | yes     |
+| `p521`    | ECDSA P-521      | yes     |
+| `ed25519` | Ed25519          | yes     |
+
+To pull in only the algorithms you need, disable the defaults and opt back in.
+For example, an ECDSA-only build that drops RSA (and its `num-bigint-dig` /
+`libm` dependency tree):
+
+```toml
+[dependencies]
+certkit = { version = "0.1", default-features = false, features = ["p256", "p384"] }
+```
+
+At least one algorithm feature must be enabled; building with none is a
+compile error. Note that enabling `p521` also enables `p384` (see the comment
+in `Cargo.toml` for the upstream reason).
 
 ## Dependencies
 

@@ -2,8 +2,6 @@ use crate::error::CertKitError;
 use der::pem::LineEnding;
 pub type Result<T> = std::result::Result<T, CertKitError>;
 
-#[cfg(feature = "p521")]
-use ecdsa::VerifyingKey;
 #[cfg(feature = "ed25519")]
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
 #[cfg(feature = "ed25519")]
@@ -12,8 +10,6 @@ use ed25519_dalek::VerifyingKey as Ed25519VerifyingKey;
 use p256::ecdsa::{SigningKey as P256SigningKey, VerifyingKey as P256VerifyingKey};
 #[cfg(feature = "p384")]
 use p384::ecdsa::{SigningKey as P384SigningKey, VerifyingKey as P384VerifyingKey};
-#[cfg(feature = "p521")]
-use p521::NistP521;
 #[cfg(feature = "p521")]
 use p521::ecdsa::SigningKey as P521SigningKey;
 #[cfg(feature = "rsa")]
@@ -106,12 +102,12 @@ pub enum KeyPair {
     /// ECDSA P-521 key pair.
     ///
     /// # Fields
-    /// * `signing_key` - The signing key.
-    /// * `verifying_key` - The verifying key.
+    /// * `secret_key` - The secret key.
+    /// * `public_key` - The public key.
     #[cfg(feature = "p521")]
     EcdsaP521 {
-        signing_key: ecdsa::SigningKey<NistP521>,
-        verifying_key: ecdsa::VerifyingKey<NistP521>,
+        secret_key: p521::SecretKey,
+        public_key: p521::PublicKey,
     },
     /// Ed25519 key pair.
     ///
@@ -122,6 +118,20 @@ pub enum KeyPair {
 }
 
 use pkcs8::{EncodePrivateKey, PrivateKeyInfo};
+
+/// Builds the P-521 ECDSA signing key for a stored secret key.
+///
+/// P-521 ECDSA signs over a SHA-512 prehash, which the `p521` crate implements
+/// only on its `ecdsa::SigningKey` newtype. We store the `elliptic_curve`
+/// `SecretKey`/`PublicKey` (they implement the PKCS#8/SPKI/SEC1 encoders that
+/// the newtypes lack and, unlike the newtypes, derive `Debug`), and recover the
+/// signing key on demand here. The scalar is preserved exactly, so signatures
+/// match the previous `ecdsa::SigningKey<NistP521>` path.
+#[cfg(feature = "p521")]
+fn p521_signing_key(secret_key: &p521::SecretKey) -> P521SigningKey {
+    P521SigningKey::from_bytes(&secret_key.to_bytes())
+        .expect("a stored secret key always holds a valid scalar")
+}
 
 impl KeyPair {
     /// Generate an RSA key pair with the specified number of bits.
@@ -284,12 +294,11 @@ impl KeyPair {
     #[cfg(feature = "p521")]
     pub fn generate_ecdsa_p521() -> Self {
         let mut rng = rand_core::OsRng;
-        let signing_key: ecdsa::SigningKey<NistP521> =
-            ecdsa::SigningKey::<NistP521>::random(&mut rng);
-        let verifying_key = signing_key.verifying_key().to_owned();
+        let secret_key = p521::SecretKey::random(&mut rng);
+        let public_key = secret_key.public_key();
         KeyPair::EcdsaP521 {
-            signing_key,
-            verifying_key,
+            secret_key,
+            public_key,
         }
     }
 
@@ -372,7 +381,7 @@ impl KeyPair {
             #[cfg(feature = "p384")]
             KeyPair::EcdsaP384 { verifying_key, .. } => verifying_key.to_sec1_bytes().to_vec(),
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { verifying_key, .. } => verifying_key.to_sec1_bytes().to_vec(),
+            KeyPair::EcdsaP521 { public_key, .. } => public_key.to_sec1_bytes().to_vec(),
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key } => signing_key.verifying_key().to_bytes().to_vec(),
         }
@@ -404,8 +413,8 @@ impl KeyPair {
                 EncodePrivateKey::to_pkcs8_pem(signing_key, LineEnding::default())
             }
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { signing_key, .. } => {
-                EncodePrivateKey::to_pkcs8_pem(signing_key, LineEnding::default())
+            KeyPair::EcdsaP521 { secret_key, .. } => {
+                EncodePrivateKey::to_pkcs8_pem(secret_key, LineEnding::default())
             }
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key, .. } => {
@@ -504,11 +513,11 @@ impl KeyPair {
         }
         // Try ECDSA P-521 PKCS#8
         #[cfg(feature = "p521")]
-        if let Ok(signing_key) = ecdsa::SigningKey::<NistP521>::try_from(private_key_info.clone()) {
-            let verifying_key = signing_key.verifying_key().to_owned();
+        if let Ok(secret_key) = p521::SecretKey::try_from(private_key_info.clone()) {
+            let public_key = secret_key.public_key();
             return Ok(KeyPair::EcdsaP521 {
-                signing_key,
-                verifying_key,
+                secret_key,
+                public_key,
             });
         }
 
@@ -624,8 +633,8 @@ impl KeyPair {
                 x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
             }
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { verifying_key, .. } => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+            KeyPair::EcdsaP521 { public_key, .. } => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*public_key).unwrap()
             }
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key } => {
@@ -715,10 +724,10 @@ impl KeyPair {
                 Ok(signature.to_vec())
             }
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { signing_key, .. } => {
-                let skey: P521SigningKey = signing_key.clone().into();
+            KeyPair::EcdsaP521 { secret_key, .. } => {
+                let signing_key = p521_signing_key(secret_key);
                 let signature: p521::ecdsa::Signature =
-                    p521::ecdsa::signature::Signer::sign(&skey, data);
+                    p521::ecdsa::signature::Signer::sign(&signing_key, data);
                 Ok(signature.to_vec())
             }
             #[cfg(feature = "ed25519")]
@@ -776,7 +785,7 @@ pub enum PublicKey {
     EcdsaP384(P384VerifyingKey),
     /// ECDSA P-521 public key.
     #[cfg(feature = "p521")]
-    EcdsaP521(VerifyingKey<NistP521>),
+    EcdsaP521(p521::PublicKey),
     /// Ed25519 public key.
     #[cfg(feature = "ed25519")]
     Ed25519(Ed25519VerifyingKey),
@@ -820,7 +829,7 @@ impl PublicKey {
             #[cfg(feature = "p384")]
             PublicKey::EcdsaP384(verifying_key) => Ok(verifying_key.to_sec1_bytes().to_vec()),
             #[cfg(feature = "p521")]
-            PublicKey::EcdsaP521(verifying_key) => Ok(verifying_key.to_sec1_bytes().to_vec()),
+            PublicKey::EcdsaP521(public_key) => Ok(public_key.to_sec1_bytes().to_vec()),
             #[cfg(feature = "ed25519")]
             PublicKey::Ed25519(verifying_key) => Ok(verifying_key.to_bytes().to_vec()),
         }
@@ -916,7 +925,7 @@ impl PublicKey {
             #[cfg(feature = "p384")]
             KeyPair::EcdsaP384 { verifying_key, .. } => PublicKey::EcdsaP384(*verifying_key),
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { verifying_key, .. } => PublicKey::EcdsaP521(*verifying_key),
+            KeyPair::EcdsaP521 { public_key, .. } => PublicKey::EcdsaP521(*public_key),
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key, .. } => PublicKey::Ed25519(signing_key.verifying_key()),
         }
@@ -1015,15 +1024,13 @@ impl PublicKey {
                     }
                     #[cfg(feature = "p521")]
                     const_oid::db::rfc5912::SECP_521_R_1 => {
-                        let verifying_key = ecdsa::VerifyingKey::<NistP521>::from_sec1_bytes(
-                            raw_bytes,
-                        )
-                        .map_err(|_| {
-                            CertKitError::DecodingError(
-                                "Invalid P-521 public key bytes".to_string(),
-                            )
-                        })?;
-                        Ok(PublicKey::EcdsaP521(verifying_key))
+                        let public_key =
+                            p521::PublicKey::from_sec1_bytes(raw_bytes).map_err(|_| {
+                                CertKitError::DecodingError(
+                                    "Invalid P-521 public key bytes".to_string(),
+                                )
+                            })?;
+                        Ok(PublicKey::EcdsaP521(public_key))
                     }
                     _ => Err(CertKitError::DecodingError(format!(
                         "Unsupported EC curve OID: {params_oid}"
@@ -1102,7 +1109,7 @@ mod test {
     fn pem_encode_decode_ecdsa_p521() {
         let p521 = KeyPair::generate_ecdsa_p521();
         let p521_der = p521::pkcs8::EncodePrivateKey::to_pkcs8_der(match &p521 {
-            KeyPair::EcdsaP521 { signing_key, .. } => signing_key,
+            KeyPair::EcdsaP521 { secret_key, .. } => secret_key,
             _ => unreachable!(),
         })
         .unwrap();

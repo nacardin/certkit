@@ -15,5 +15,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Check
+      - name: Check (default features)
         run: cargo check
+      - name: Build all feature combinations
+        run: ./compile_feature_combinations.sh
