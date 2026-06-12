@@ -109,18 +109,23 @@ impl TbsCertificate {
 
         // Convert the subject public key to SPKI format
         let subject_public_key_info = match &self.subject_public_key {
+            #[cfg(feature = "rsa")]
             PublicKey::Rsa(public) => {
                 x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone()).unwrap()
             }
+            #[cfg(feature = "p256")]
             PublicKey::EcdsaP256(verifying_key) => {
                 x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
             }
+            #[cfg(feature = "p384")]
             PublicKey::EcdsaP384(verifying_key) => {
                 x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
             }
+            #[cfg(feature = "p521")]
             PublicKey::EcdsaP521(verifying_key) => {
                 x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
             }
+            #[cfg(feature = "ed25519")]
             PublicKey::Ed25519(verifying_key) => {
                 let pk_bytes = verifying_key.to_bytes();
                 x509_cert::spki::SubjectPublicKeyInfoOwned {
