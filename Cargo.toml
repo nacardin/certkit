@@ -2,6 +2,7 @@
 name = "certkit"
 version = "0.1.2"
 edition = "2024"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 description = "A pure Rust library for X.509 certificate management, creation, and validation, supporting RSA, ECDSA, and Ed25519 keys, with no OpenSSL or ring dependencies."
 repository = "https://github.com/nacardin/certkit.git"
@@ -13,9 +14,9 @@ categories = ["cryptography", "authentication"]
 authors = ["Nick Cardin <nick@cardin.email>"]
 
 [features]
-default = ["rsa", "p256", "p384", "p521","ed25519"]
+default = ["rsa", "p256", "p384", "p521", "ed25519"]
 p521 = ["dep:p521"]
-ed25519 = ["ed25519-dalek"]
+ed25519 = ["dep:ed25519-dalek"]
 
 
 [dependencies]
@@ -25,9 +26,13 @@ rsa = { version = "0.9", optional = true }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p384 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p521 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
-ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8", "pem"], optional = true}
+ed25519-dalek = { version = "2", features = [
+    "rand_core",
+    "pkcs8",
+    "pem",
+], optional = true }
 sha2 = { version = "0.10", default-features = false, features = ["oid"] }
-rand_core = { version = "0.6", features = ["getrandom"]}
+rand_core = { version = "0.6", features = ["getrandom"] }
 der = "0.7"
 time = "0.3"
 pem = "3"
