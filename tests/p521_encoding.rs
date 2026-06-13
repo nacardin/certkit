@@ -1,5 +1,10 @@
-// TEMPORARY baseline test — captures P-521 encodings/signature behavior so the
-// feature-gate refactor can be proven byte-identical. Deleted before finishing.
+//! Byte-stability regression test for P-521 key handling.
+//!
+//! Pins the SEC1 public key, SPKI DER, and PKCS#8 PEM produced for a fixed
+//! P-521 private key, plus the SHA-512 ECDSA signing/verification round-trip.
+//! The expected values were captured from the generic `ecdsa::SigningKey<NistP521>`
+//! implementation, so this guards against any encoding drift if the underlying
+//! key types are changed again.
 #![cfg(feature = "p521")]
 
 use certkit::key::{KeyPair, PublicKey};
