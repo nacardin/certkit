@@ -100,6 +100,5 @@ fn chain_rsa() {
 
 #[test]
 fn chain_mixed_algorithms() {
-    // p384 root signs a p256 intermediate, which signs an ed25519 leaf.
-    assert_chain_validates("p384", "p256", "ed25519");
+    assert_chain_validates("rsa", "p256", "ed25519");
 }
