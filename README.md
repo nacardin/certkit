@@ -24,10 +24,13 @@ Add this to your `Cargo.toml`:
 certkit = "0.1"
 ```
 
+## CLI
+
+[`certkit-cli`](certkit-cli/) is a CLI that installs a `certkit` binary for generating keys and certificates. See its [README](certkit-cli/README.md) for usage.
+
 ## Cargo features
 
-Each cryptographic algorithm is behind its own feature. All are enabled by
-default, so the default build is unchanged:
+Each cryptographic algorithm is behind its own feature. All are enabled by default, so the default build is unchanged:
 
 | Feature   | Algorithm        | Default |
 |-----------|------------------|---------|
@@ -37,18 +40,14 @@ default, so the default build is unchanged:
 | `p521`    | ECDSA P-521      | yes     |
 | `ed25519` | Ed25519          | yes     |
 
-To pull in only the algorithms you need, disable the defaults and opt back in.
-For example, an ECDSA-only build that drops RSA (and its `num-bigint-dig` /
-`libm` dependency tree):
+To pull in only the algorithms you need, disable the defaults and opt back in. For example, an ECDSA-only build that drops RSA (and its `num-bigint-dig` / `libm` dependency tree):
 
 ```toml
 [dependencies]
 certkit = { version = "0.1", default-features = false, features = ["p256", "p384"] }
 ```
 
-At least one algorithm feature must be enabled; building with none is a
-compile error. Note that enabling `p521` also enables `p384` (see the comment
-in `Cargo.toml` for the upstream reason).
+At least one algorithm feature must be enabled; building with none is a compile error.
 
 ## Dependencies
 

@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Per-algorithm Cargo features (`rsa`, `p256`, `p384`, `p521`, `ed25519`),
   all enabled by default. Set `default-features = false` and opt in to drop
-  algorithms you don't use — for example, to build without RSA and its
+  algorithms you don't use, for example, to build without RSA and its
   `num-bigint-dig`/`libm` dependency tree. See the README for details.
 - A compile error is now raised when no algorithm feature is enabled.
 - `compile_feature_combinations.sh` and a CI step that builds a representative
