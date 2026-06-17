@@ -39,7 +39,7 @@ x509-cert = "0.2"
 pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
 base64 = "0.22"
 sha1 = "0.10"
-thiserror = "1.0"
+thiserror = "2"
 
 [dev-dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
