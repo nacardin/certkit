@@ -30,24 +30,20 @@ rsa = { version = "0.9", optional = true }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p384 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p521 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
-ed25519-dalek = { version = "2", features = [
-    "rand_core",
-    "pkcs8",
-    "pem",
-], optional = true }
+ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8", "pem"], optional = true }
 sha2 = { version = "0.10", default-features = false, features = ["oid"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 der = "0.7"
 time = "0.3"
 pem = "3"
-x509-cert = "0.2.5"
-pkcs8 = { version = "0.10.2", features = ["alloc", "pem"] }
-rand = "0.9.1"
-base64 = "0.22.1"
+x509-cert = "0.2"
+pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
+rand = "0.9"
+base64 = "0.22"
 sha1 = "0.10"
 thiserror = "1.0"
 regex = "1.7"
 
 [dev-dependencies]
 openssl = { version = "0.10" }
-botan = { version = "0.11", features = ["vendored"] }
+botan = { version = "0.13" }
