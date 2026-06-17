@@ -25,21 +25,20 @@ ed25519 = ["dep:ed25519-dalek"]
 [dependencies]
 bon = "3"
 const-oid = { version = "0.9.6", features = ["db"] }
-rsa = { version = "0.9", optional = true }
+der = "0.7"
+ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8", "pem"], optional = true }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p384 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p521 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
-ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8", "pem"], optional = true }
-sha2 = { version = "0.10", default-features = false, features = ["oid"] }
-rand_core = { version = "0.6", features = ["getrandom"] }
-der = "0.7"
-time = "0.3"
 pem = "3"
-x509-cert = "0.2"
 pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
-base64 = "0.22"
+rand_core = { version = "0.6", features = ["getrandom"] }
+rsa = { version = "0.9", optional = true }
 sha1 = "0.10"
+sha2 = { version = "0.10", default-features = false, features = ["oid"] }
 thiserror = "2"
+time = "0.3"
+x509-cert = "0.2"
 
 [dev-dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
