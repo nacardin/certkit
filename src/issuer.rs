@@ -329,3 +329,116 @@ pub trait Issuer {
         Certificate { inner: cert_inner }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Issuer;
+    use crate::cert::extensions::{
+        AuthorityKeyIdentifier, SubjectKeyIdentifier, ToAndFromX509Extension,
+    };
+    use crate::cert::params::{CertificationRequestInfo, DistinguishedName, Validity};
+    use crate::cert::{Certificate, CertificateWithPrivateKey};
+    use crate::key::{KeyPair, PublicKey};
+
+    fn request(common_name: &str, key: &KeyPair, is_ca: bool) -> CertificationRequestInfo {
+        CertificationRequestInfo::builder()
+            .subject(
+                DistinguishedName::builder()
+                    .common_name(common_name.to_string())
+                    .build(),
+            )
+            .subject_public_key(PublicKey::from_key_pair(key))
+            .is_ca(is_ca)
+            .build()
+    }
+
+    /// Returns the first extension of type `E` carried by `cert`, if present.
+    fn extension<E: ToAndFromX509Extension>(cert: &Certificate) -> Option<E> {
+        let info = cert.to_cert_info().unwrap();
+        info.extensions
+            .iter()
+            .find(|ext| ext.oid == E::OID)
+            .map(|ext| ext.to_extension::<E>().unwrap())
+    }
+
+    // The signature algorithm OID must match the curve's hash (RFC 5480): the
+    // signer uses SHA-256/384/512 for P-256/384/521, so the declared OID must
+    // agree or external verifiers reject the certificate.
+
+    #[cfg(feature = "p256")]
+    #[test]
+    fn p256_signature_algorithm_is_ecdsa_with_sha256() {
+        let key = KeyPair::generate_ecdsa_p256();
+        let cert = Certificate::new_self_signed(&request("p256.ca", &key, true), &key);
+        let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_256;
+        assert_eq!(cert.inner.signature_algorithm.oid, expected);
+        assert_eq!(cert.inner.tbs_certificate.signature.oid, expected);
+    }
+
+    #[cfg(feature = "p384")]
+    #[test]
+    fn p384_signature_algorithm_is_ecdsa_with_sha384() {
+        let key = KeyPair::generate_ecdsa_p384();
+        let cert = Certificate::new_self_signed(&request("p384.ca", &key, true), &key);
+        let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_384;
+        assert_eq!(cert.inner.signature_algorithm.oid, expected);
+        assert_eq!(cert.inner.tbs_certificate.signature.oid, expected);
+    }
+
+    #[cfg(feature = "p521")]
+    #[test]
+    fn p521_signature_algorithm_is_ecdsa_with_sha512() {
+        let key = KeyPair::generate_ecdsa_p521();
+        let cert = Certificate::new_self_signed(&request("p521.ca", &key, true), &key);
+        let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_512;
+        assert_eq!(cert.inner.signature_algorithm.oid, expected);
+        assert_eq!(cert.inner.tbs_certificate.signature.oid, expected);
+    }
+
+    /// Issued certificates carry a Subject Key Identifier, and their Authority
+    /// Key Identifier holds only the key id (no issuer name/serial) and matches
+    /// the issuer's SKI — so a chain links up during path building.
+    #[cfg(feature = "p256")]
+    #[test]
+    fn issued_chain_links_aki_to_issuer_ski() {
+        let root_key = KeyPair::generate_ecdsa_p256();
+        let root = Certificate::new_self_signed(&request("Root CA", &root_key, true), &root_key);
+        let root_ca = CertificateWithPrivateKey {
+            cert: root,
+            key: root_key,
+        };
+
+        let int_key = KeyPair::generate_ecdsa_p256();
+        let int = root_ca.issue(
+            &request("Intermediate CA", &int_key, true),
+            Validity::for_days(365),
+        );
+        let int_ca = CertificateWithPrivateKey {
+            cert: int,
+            key: int_key,
+        };
+
+        let leaf_key = KeyPair::generate_ecdsa_p256();
+        let leaf = int_ca.issue(&request("leaf", &leaf_key, false), Validity::for_days(365));
+
+        let root_ski = extension::<SubjectKeyIdentifier>(&root_ca.cert).expect("root SKI");
+        let int_ski = extension::<SubjectKeyIdentifier>(&int_ca.cert).expect("intermediate SKI");
+        assert!(
+            extension::<SubjectKeyIdentifier>(&leaf).is_some(),
+            "leaf must carry a Subject Key Identifier"
+        );
+
+        let int_aki = extension::<AuthorityKeyIdentifier>(&int_ca.cert).expect("intermediate AKI");
+        let leaf_aki = extension::<AuthorityKeyIdentifier>(&leaf).expect("leaf AKI");
+
+        // keyId-only AKI (PKIX profile).
+        assert!(int_aki.authority_cert_issuer.is_none());
+        assert!(int_aki.authority_cert_serial_number.is_none());
+        assert!(leaf_aki.authority_cert_issuer.is_none());
+        assert!(leaf_aki.authority_cert_serial_number.is_none());
+
+        // Each cert's AKI key id equals its issuer's SKI key id.
+        assert_eq!(int_aki.key_identifier, root_ski.key_identifier);
+        assert_eq!(leaf_aki.key_identifier, int_ski.key_identifier);
+    }
+}

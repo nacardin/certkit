@@ -228,3 +228,51 @@ impl TbsCertificate {
         self.to_tbs_certificate_inner().to_der()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cert::Certificate;
+    use crate::cert::params::{CertificationRequestInfo, DistinguishedName};
+    use crate::key::{KeyPair, PublicKey};
+
+    fn self_signed(key: &KeyPair) -> Certificate {
+        let request = CertificationRequestInfo::builder()
+            .subject(
+                DistinguishedName::builder()
+                    .common_name("parse.test".to_string())
+                    .build(),
+            )
+            .subject_public_key(PublicKey::from_key_pair(key))
+            .build();
+        Certificate::new_self_signed(&request, key)
+    }
+
+    // The OID->SignatureAlgorithm parse path must recognize the per-curve ECDSA
+    // OIDs; P-384/P-521 certificates previously failed to parse with
+    // "Unsupported signature algorithm".
+
+    #[cfg(feature = "p384")]
+    #[test]
+    fn parses_ecdsa_p384_signature_algorithm() {
+        let cert = self_signed(&KeyPair::generate_ecdsa_p384());
+        let parsed = TbsCertificate::from_tbs_certificate_inner(cert.inner.tbs_certificate.clone())
+            .expect("a P-384 certificate must parse");
+        assert!(matches!(
+            parsed.signature_algorithm,
+            SignatureAlgorithm::Sha384WithECDSA
+        ));
+    }
+
+    #[cfg(feature = "p521")]
+    #[test]
+    fn parses_ecdsa_p521_signature_algorithm() {
+        let cert = self_signed(&KeyPair::generate_ecdsa_p521());
+        let parsed = TbsCertificate::from_tbs_certificate_inner(cert.inner.tbs_certificate.clone())
+            .expect("a P-521 certificate must parse");
+        assert!(matches!(
+            parsed.signature_algorithm,
+            SignatureAlgorithm::Sha512WithECDSA
+        ));
+    }
+}

@@ -1170,4 +1170,47 @@ mod test {
         let ed_decoded = KeyPair::import_from_pkcs8_pem(&ed_pem);
         assert!(ed_decoded.is_ok(), "Ed25519 PEM decode should succeed");
     }
+
+    // X.509 requires ECDSA signatures to be the DER-encoded ECDSA-Sig-Value
+    // SEQUENCE { r, s }. `sign_data` previously emitted the fixed-size r||s
+    // form, which is rejected by `Signature::from_der` and fails verification.
+
+    #[test]
+    #[cfg(feature = "p256")]
+    fn ecdsa_p256_sign_data_is_der_and_verifies() {
+        use p256::ecdsa::signature::Verifier;
+        let key = KeyPair::generate_ecdsa_p256();
+        let msg = b"certkit ecdsa signature payload";
+        let sig_bytes = key.sign_data(msg).unwrap();
+        let sig = p256::ecdsa::Signature::from_der(&sig_bytes)
+            .expect("ECDSA P-256 signature must be DER-encoded");
+        let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(&key.get_public_key_der()).unwrap();
+        vk.verify(msg, &sig).expect("signature must verify");
+    }
+
+    #[test]
+    #[cfg(feature = "p384")]
+    fn ecdsa_p384_sign_data_is_der_and_verifies() {
+        use p384::ecdsa::signature::Verifier;
+        let key = KeyPair::generate_ecdsa_p384();
+        let msg = b"certkit ecdsa signature payload";
+        let sig_bytes = key.sign_data(msg).unwrap();
+        let sig = p384::ecdsa::Signature::from_der(&sig_bytes)
+            .expect("ECDSA P-384 signature must be DER-encoded");
+        let vk = p384::ecdsa::VerifyingKey::from_sec1_bytes(&key.get_public_key_der()).unwrap();
+        vk.verify(msg, &sig).expect("signature must verify");
+    }
+
+    #[test]
+    #[cfg(feature = "p521")]
+    fn ecdsa_p521_sign_data_is_der_and_verifies() {
+        use p521::ecdsa::signature::Verifier;
+        let key = KeyPair::generate_ecdsa_p521();
+        let msg = b"certkit ecdsa signature payload";
+        let sig_bytes = key.sign_data(msg).unwrap();
+        let sig = p521::ecdsa::Signature::from_der(&sig_bytes)
+            .expect("ECDSA P-521 signature must be DER-encoded");
+        let vk = p521::ecdsa::VerifyingKey::from_sec1_bytes(&key.get_public_key_der()).unwrap();
+        vk.verify(msg, &sig).expect("signature must verify");
+    }
 }
