@@ -49,6 +49,13 @@ certkit = { version = "0.1", default-features = false, features = ["p256", "p384
 
 At least one algorithm feature must be enabled; building with none is a compile error.
 
+## Key formats
+
+| Standard | Supported | Notes |
+|----------|-----------|-------|
+| PKCS #1  | RSA only  | Encoding/decoding RSA public and private keys; RSASSA-PKCS1-v1_5 signatures with SHA-256 |
+| PKCS #8  | ✅ All    | Primary private-key format for every algorithm (RSA, ECDSA, Ed25519). PEM and DER import/export |
+
 ## Dependencies
 
 - `x509-cert`: X.509 certificate handling
