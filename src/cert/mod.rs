@@ -258,6 +258,7 @@ impl Certificate {
     /// # }
     /// ```
     pub fn to_der(&self) -> Result<Vec<u8>> {
+        log::trace!("encoding certificate to DER");
         self.inner
             .to_der()
             .map_err(|e| CertKitError::EncodingError(e.to_string()))
@@ -305,6 +306,7 @@ impl Certificate {
     /// - Base64-encoded DER data (64 characters per line)
     /// - "-----END CERTIFICATE-----" footer
     pub fn to_pem(&self) -> Result<String> {
+        log::trace!("encoding certificate to PEM");
         self.inner
             .to_pem(pkcs8::LineEnding::LF)
             .map_err(|e| CertKitError::EncodingError(e.to_string()))
@@ -622,6 +624,10 @@ impl Certificate {
         not_before: OffsetDateTime,
         not_after: OffsetDateTime,
     ) -> Self {
+        log::debug!(
+            "creating self-signed certificate for \"{}\"",
+            cert_info.subject.common_name
+        );
         let subject_dn = cert_info.subject.clone();
 
         // For self-signed certificates, the issuer is the same as the subject

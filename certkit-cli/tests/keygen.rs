@@ -5,8 +5,15 @@
 use std::process::Command;
 
 /// A `Command` for the `certkit` binary under test.
+///
+/// Defaults the binary's logging to `error` for quiet output, while still
+/// honoring an explicit `RUST_LOG` so `RUST_LOG=debug cargo test` surfaces logs.
 fn certkit() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_certkit"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_certkit"));
+    if std::env::var_os("RUST_LOG").is_none() {
+        cmd.env("RUST_LOG", "error");
+    }
+    cmd
 }
 
 /// Runs `keygen <args>`, asserts it failed, and returns its stderr.

@@ -24,6 +24,13 @@ pub struct InspectOpt {
 
 impl InspectOpt {
     pub fn execute(&self) -> Result<()> {
+        let source = self
+            .input
+            .as_deref()
+            .filter(|p| p.as_os_str() != "-")
+            .map_or_else(|| "stdin".to_string(), |p| p.display().to_string());
+        log::debug!("inspecting certificate from {source}");
+
         let bytes = read_cert_input(&self.input)?;
         let cert = parse_x509(&bytes)?;
         let report = CertReport::from_cert(&cert, self.fingerprint)?;

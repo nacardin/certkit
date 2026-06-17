@@ -27,6 +27,7 @@ bon = "3"
 const-oid = { version = "0.9.6", features = ["db"] }
 der = "0.7"
 ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8", "pem"], optional = true }
+log = "0.4"
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p384 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p521 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
@@ -41,6 +42,7 @@ time = "0.3"
 x509-cert = "0.2"
 
 [dev-dependencies]
+env_logger = "0.11"
 rustls = "0.23"
 rustls-pemfile = "2"
 rustls-pki-types = "1"

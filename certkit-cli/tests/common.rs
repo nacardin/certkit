@@ -10,7 +10,11 @@ use std::process::Command;
 
 /// A `Command` for the `certkit` binary under test.
 pub fn certkit() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_certkit"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_certkit"));
+    if std::env::var_os("RUST_LOG").is_none() {
+        cmd.env("RUST_LOG", "error");
+    }
+    cmd
 }
 
 /// Returns `true` when an external CLI tool is installed and runnable.

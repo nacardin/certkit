@@ -9,8 +9,15 @@ use std::process::{Command, Stdio};
 use tempfile::tempdir;
 
 /// A `Command` for the `certkit` binary under test.
+///
+/// Defaults the binary's logging to `error` for quiet output, while still
+/// honoring an explicit `RUST_LOG` so `RUST_LOG=debug cargo test` surfaces logs.
 fn certkit() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_certkit"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_certkit"));
+    if std::env::var_os("RUST_LOG").is_none() {
+        cmd.env("RUST_LOG", "error");
+    }
+    cmd
 }
 
 /// Writes a self-signed P-256 leaf (with SANs and EKUs) to `dir`, returning its path.

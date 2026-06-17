@@ -193,3 +193,12 @@ pub mod error;
 pub mod issuer;
 pub mod key;
 pub mod tbs_certificate;
+
+/// Initializes `env_logger` for unit tests. Defaults to the `error` level so
+/// the suite is quiet, but `RUST_LOG` still overrides it.
+#[cfg(test)]
+pub(crate) fn init_test_logger() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+        .is_test(true)
+        .try_init();
+}

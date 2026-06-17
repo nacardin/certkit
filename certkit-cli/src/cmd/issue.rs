@@ -42,6 +42,11 @@ impl IssueOpt {
             self.opts.format,
         )?;
 
+        log::debug!(
+            "loading CA certificate from {} and key from {}",
+            self.ca_cert.display(),
+            self.ca_key.display()
+        );
         let ca_cert = load_ca_cert(&self.ca_cert)?;
         let ca_key = KeyPair::import_from_pkcs8_pem(&fs::read_to_string(&self.ca_key)?)?;
         let ca = CertificateWithPrivateKey {

@@ -10,16 +10,16 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 
+use rustls::StreamOwned;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
-use rustls::StreamOwned;
 
-use certkit::cert::{Certificate, CertificateWithPrivateKey};
 use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName};
 use certkit::cert::params::{
     CertificationRequestInfo, DistinguishedName, ExtensionParam, Validity,
 };
+use certkit::cert::{Certificate, CertificateWithPrivateKey};
 use certkit::issuer::Issuer;
 use certkit::key::{KeyPair, PublicKey};
 
@@ -110,6 +110,10 @@ fn key_der(key: &KeyPair) -> PrivateKeyDer<'static> {
 /// Builds: Root CA → Intermediate CA → Server cert + Client cert,
 /// then runs a TLS echo server and client on localhost.
 fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+        .is_test(true)
+        .try_init();
+
     let keygen = &gen_key;
 
     // ── 1. Build the PKI chain ──────────────────────────────────────────

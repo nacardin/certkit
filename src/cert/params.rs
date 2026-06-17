@@ -243,7 +243,10 @@ mod tests {
         let x509_name = dn.as_x509_name();
 
         // Two RDNs were skipped (OU, L, ST were unset) leaving CN, O, C in order.
-        assert_eq!(x509_name.to_string(), "CN=leaf.example.com,O=Example Corp,C=US");
+        assert_eq!(
+            x509_name.to_string(),
+            "CN=leaf.example.com,O=Example Corp,C=US"
+        );
     }
 
     #[test]

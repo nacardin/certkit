@@ -29,7 +29,7 @@ impl KeygenOpt {
         let pem = key.encode_private_key_pem()?;
         write_bytes(&self.out, pem.as_bytes())?;
         if let Some(path) = &self.out {
-            eprintln!("Wrote private key to {}", path.display());
+            log::info!("wrote private key to {}", path.display());
         }
         Ok(())
     }

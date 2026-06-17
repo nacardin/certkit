@@ -176,6 +176,7 @@ impl KeyPair {
     /// - 4096-bit keys offer maximum security but with performance trade-offs
     #[cfg(feature = "rsa")]
     pub fn generate_rsa(bits: usize) -> Result<Self> {
+        log::debug!("generating RSA-{bits} key pair");
         let mut rng = rand_core::OsRng;
         let private = RsaPrivateKey::new(&mut rng, bits)?;
         let public = RsaPublicKey::from(&private);
@@ -217,6 +218,7 @@ impl KeyPair {
     /// - Fast signature generation and verification
     #[cfg(feature = "p256")]
     pub fn generate_ecdsa_p256() -> Self {
+        log::debug!("generating ECDSA P-256 key pair");
         let mut rng = rand_core::OsRng;
         let signing_key = P256SigningKey::random(&mut rng);
         let verifying_key = signing_key.verifying_key().to_owned();
@@ -255,6 +257,7 @@ impl KeyPair {
     /// - Slightly larger signatures than P-256
     #[cfg(feature = "p384")]
     pub fn generate_ecdsa_p384() -> Self {
+        log::debug!("generating ECDSA P-384 key pair");
         let mut rng = rand_core::OsRng;
         let signing_key = P384SigningKey::random(&mut rng);
         let verifying_key = signing_key.verifying_key().to_owned();
@@ -293,6 +296,7 @@ impl KeyPair {
     /// - Larger key and signature sizes than P-256/P-384
     #[cfg(feature = "p521")]
     pub fn generate_ecdsa_p521() -> Self {
+        log::debug!("generating ECDSA P-521 key pair");
         let mut rng = rand_core::OsRng;
         let secret_key = p521::SecretKey::random(&mut rng);
         let public_key = secret_key.public_key();
@@ -335,6 +339,7 @@ impl KeyPair {
     /// - Deterministic signatures (no random nonce required)
     #[cfg(feature = "ed25519")]
     pub fn generate_ed25519() -> Self {
+        log::debug!("generating Ed25519 key pair");
         let mut rng = rand_core::OsRng;
         let signing_key: Ed25519SigningKey = Ed25519SigningKey::generate(&mut rng);
         KeyPair::Ed25519 { signing_key }
@@ -467,6 +472,7 @@ impl KeyPair {
     /// }
     /// ```
     pub fn import_from_der(der: &[u8]) -> Result<Self> {
+        log::trace!("importing key from {} bytes of DER", der.len());
         // Try RSA PKCS#1 first
         #[cfg(feature = "rsa")]
         if let (Ok(private), Ok(public)) = (
@@ -575,6 +581,7 @@ impl KeyPair {
     /// - Contain valid base64-encoded DER data
     /// - Represent a supported key type (RSA, ECDSA P-256/P-384/P-521, Ed25519)
     pub fn import_from_pkcs8_pem(pem_str: &str) -> Result<Self> {
+        log::trace!("importing key from PKCS#8 PEM");
         let pemd = pem::parse(pem_str)
             .map_err(|_| CertKitError::DecodingError("Failed to parse PEM".to_string()))?;
 
@@ -703,6 +710,7 @@ impl KeyPair {
     /// - Ed25519 signatures are deterministic and consistent
     /// - All algorithms provide strong security when used properly
     pub fn sign_data(&self, data: &[u8]) -> Result<Vec<u8>> {
+        log::trace!("signing {} bytes of data", data.len());
         match self {
             #[cfg(feature = "rsa")]
             KeyPair::Rsa { private, .. } => {
@@ -1103,6 +1111,7 @@ mod test {
     #[test]
     #[cfg(feature = "rsa")]
     fn pem_encode_decode_rsa() {
+        crate::init_test_logger();
         let rsa = KeyPair::generate_rsa(2048).unwrap();
         let rsa_der = rsa::pkcs8::EncodePrivateKey::to_pkcs8_der(match &rsa {
             KeyPair::Rsa { private, .. } => &**private,
@@ -1117,6 +1126,7 @@ mod test {
     #[test]
     #[cfg(feature = "p256")]
     fn pem_encode_decode_ecdsa_p256() {
+        crate::init_test_logger();
         let p256 = KeyPair::generate_ecdsa_p256();
         let p256_der = p256::pkcs8::EncodePrivateKey::to_pkcs8_der(match &p256 {
             KeyPair::EcdsaP256 { signing_key, .. } => signing_key,
@@ -1131,6 +1141,7 @@ mod test {
     #[test]
     #[cfg(feature = "p384")]
     fn pem_encode_decode_ecdsa_p384() {
+        crate::init_test_logger();
         let p384 = KeyPair::generate_ecdsa_p384();
         let p384_der = p384::pkcs8::EncodePrivateKey::to_pkcs8_der(match &p384 {
             KeyPair::EcdsaP384 { signing_key, .. } => signing_key,
@@ -1145,6 +1156,7 @@ mod test {
     #[test]
     #[cfg(feature = "p521")]
     fn pem_encode_decode_ecdsa_p521() {
+        crate::init_test_logger();
         let p521 = KeyPair::generate_ecdsa_p521();
         let p521_der = p521::pkcs8::EncodePrivateKey::to_pkcs8_der(match &p521 {
             KeyPair::EcdsaP521 { secret_key, .. } => secret_key,
@@ -1159,6 +1171,7 @@ mod test {
     #[test]
     #[cfg(feature = "ed25519")]
     fn pem_encode_decode_ed25519() {
+        crate::init_test_logger();
         let ed = KeyPair::generate_ed25519();
         let ed_der = ed25519_dalek::pkcs8::EncodePrivateKey::to_pkcs8_der(match &ed {
             KeyPair::Ed25519 { signing_key } => signing_key,
@@ -1178,6 +1191,7 @@ mod test {
     #[cfg(feature = "p256")]
     fn ecdsa_p256_sign_data_is_der_and_verifies() {
         use p256::ecdsa::signature::Verifier;
+        crate::init_test_logger();
         let key = KeyPair::generate_ecdsa_p256();
         let msg = b"certkit ecdsa signature payload";
         let sig_bytes = key.sign_data(msg).unwrap();
@@ -1191,6 +1205,7 @@ mod test {
     #[cfg(feature = "p384")]
     fn ecdsa_p384_sign_data_is_der_and_verifies() {
         use p384::ecdsa::signature::Verifier;
+        crate::init_test_logger();
         let key = KeyPair::generate_ecdsa_p384();
         let msg = b"certkit ecdsa signature payload";
         let sig_bytes = key.sign_data(msg).unwrap();
@@ -1204,6 +1219,7 @@ mod test {
     #[cfg(feature = "p521")]
     fn ecdsa_p521_sign_data_is_der_and_verifies() {
         use p521::ecdsa::signature::Verifier;
+        crate::init_test_logger();
         let key = KeyPair::generate_ecdsa_p521();
         let msg = b"certkit ecdsa signature payload";
         let sig_bytes = key.sign_data(msg).unwrap();

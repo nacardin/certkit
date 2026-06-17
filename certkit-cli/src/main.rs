@@ -67,6 +67,11 @@ enum Command {
 }
 
 fn main() {
+    // Logs go to stderr (keeping stdout clean for piping). The default level is `info`.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp(None)
+        .init();
+
     let cli = Cli::parse();
     if let Err(err) = run(cli) {
         eprintln!("error: {err}");

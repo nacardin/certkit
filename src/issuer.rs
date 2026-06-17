@@ -225,6 +225,13 @@ pub trait Issuer {
             KeyPair::Ed25519 { .. } => SignatureAlgorithm::Sha256WithEdDSA,
         };
 
+        log::debug!(
+            "issuing certificate for \"{}\" (CA: {}, signature algorithm: {:?})",
+            cert_request.subject.common_name,
+            cert_request.is_ca,
+            signature_algo
+        );
+
         // Authority Key Identifier: SHA-1 of the signing (issuer) key, so issued
         // certs point back to this CA.
         let issuer_spki = self.signing_key().as_spki();
@@ -295,12 +302,13 @@ pub trait Issuer {
             extensions.push(ExtensionParam::from_extension(extended_key_usage, true));
         }
 
-        let combined_extensions = cert_request
+        let combined_extensions: Vec<ExtensionParam> = cert_request
             .extensions
             .iter()
             .cloned()
             .chain(extensions)
             .collect();
+        log::trace!("certificate has {} extension(s)", combined_extensions.len());
 
         let tbs_cert = TbsCertificate {
             serial_number: vec![1],
@@ -319,6 +327,7 @@ pub trait Issuer {
             .signing_key()
             .sign_data(&tbs_cert_inner.to_der().unwrap())
             .unwrap();
+        log::trace!("certificate signed ({} byte signature)", signature.len());
 
         let cert_inner = CertificateInner {
             signature_algorithm: tbs_cert_inner.signature.clone(),
@@ -341,6 +350,7 @@ mod tests {
     use crate::key::{KeyPair, PublicKey};
 
     fn request(common_name: &str, key: &KeyPair, is_ca: bool) -> CertificationRequestInfo {
+        crate::init_test_logger();
         CertificationRequestInfo::builder()
             .subject(
                 DistinguishedName::builder()

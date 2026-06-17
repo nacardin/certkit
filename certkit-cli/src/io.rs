@@ -38,7 +38,7 @@ pub fn emit(
         let pem = key.encode_private_key_pem()?;
         write_bytes(key_out, pem.as_bytes())?;
         if let Some(path) = key_out {
-            eprintln!("Wrote private key to {}", path.display());
+            log::info!("wrote private key to {}", path.display());
         }
     }
 
@@ -48,7 +48,7 @@ pub fn emit(
     };
     write_bytes(&opts.out, &bytes)?;
     if let Some(path) = &opts.out {
-        eprintln!("Wrote certificate to {}", path.display());
+        log::info!("wrote certificate to {}", path.display());
     }
     Ok(())
 }
