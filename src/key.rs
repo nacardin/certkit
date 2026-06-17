@@ -22,6 +22,7 @@ use rsa::signature::Signer as RsaSigner;
 use rsa::{
     RsaPrivateKey, RsaPublicKey,
     pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPublicKey},
+    traits::PublicKeyParts,
 };
 #[cfg(feature = "rsa")]
 use sha2::Sha256; //only used with RSA keys.
@@ -67,7 +68,7 @@ use sha2::Sha256; //only used with RSA keys.
 /// - ECDSA keys provide equivalent security with smaller key sizes
 /// - Ed25519 provides high security and performance
 /// - Choose the appropriate algorithm based on your security requirements and compatibility needs
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum KeyPair {
     /// RSA key pair.
     ///
@@ -115,6 +116,27 @@ pub enum KeyPair {
     /// * `signing_key` - The signing key.
     #[cfg(feature = "ed25519")]
     Ed25519 { signing_key: Ed25519SigningKey },
+}
+
+impl std::fmt::Debug for KeyPair {
+    /// Formats the key pair for debugging **without** exposing private key material.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(feature = "rsa")]
+            Self::Rsa { public, .. } => f
+                .debug_struct("Rsa")
+                .field("bits", &public.n().bits())
+                .finish_non_exhaustive(),
+            #[cfg(feature = "p256")]
+            Self::EcdsaP256 { .. } => f.debug_struct("EcdsaP256").finish_non_exhaustive(),
+            #[cfg(feature = "p384")]
+            Self::EcdsaP384 { .. } => f.debug_struct("EcdsaP384").finish_non_exhaustive(),
+            #[cfg(feature = "p521")]
+            Self::EcdsaP521 { .. } => f.debug_struct("EcdsaP521").finish_non_exhaustive(),
+            #[cfg(feature = "ed25519")]
+            Self::Ed25519 { .. } => f.debug_struct("Ed25519").finish_non_exhaustive(),
+        }
+    }
 }
 
 use pkcs8::{EncodePrivateKey, PrivateKeyInfo};
@@ -176,6 +198,11 @@ impl KeyPair {
     /// - 4096-bit keys offer maximum security but with performance trade-offs
     #[cfg(feature = "rsa")]
     pub fn generate_rsa(bits: usize) -> Result<Self> {
+        if bits < 2048 {
+            return Err(CertKitError::InvalidInput(format!(
+                "RSA key size {bits} bits is below the minimum of 2048"
+            )));
+        }
         log::debug!("generating RSA-{bits} key pair");
         let mut rng = rand_core::OsRng;
         let private = RsaPrivateKey::new(&mut rng, bits)?;

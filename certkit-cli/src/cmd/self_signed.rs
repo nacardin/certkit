@@ -38,7 +38,7 @@ impl SelfSignedOpt {
             &key,
             now,
             now + Duration::days(self.opts.days),
-        );
+        )?;
 
         emit(
             &cert,

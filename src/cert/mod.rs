@@ -174,7 +174,7 @@ impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
 ///     .build();
 ///
 /// // Generate the self-signed certificate
-/// let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+/// let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
 ///
 /// // Export to different formats
 /// let der_bytes = certificate.to_der()?;
@@ -194,7 +194,7 @@ impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
 /// # let subject = DistinguishedName::builder().common_name("test".to_string()).build();
 /// # let cert_info = CertificationRequestInfo::builder()
 /// #     .subject(subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair)).build();
-/// # let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+/// # let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
 ///
 /// // Extract certificate information
 /// let cert_info = certificate.to_cert_info()?;
@@ -236,7 +236,7 @@ impl Certificate {
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
     ///     .build();
     ///
-    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
     /// let der_bytes = certificate.to_der()?;
     ///
     /// // Save to file or transmit over network
@@ -277,7 +277,7 @@ impl Certificate {
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
     ///     .build();
     ///
-    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
     /// let pem_string = certificate.to_pem()?;
     ///
     /// println!("Certificate in PEM format:\n{}", pem_string);
@@ -335,7 +335,7 @@ impl Certificate {
     ///     .is_ca(true)
     ///     .build();
     ///
-    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
     ///
     /// // Extract information back from the certificate
     /// let extracted_info = certificate.to_cert_info()?;
@@ -357,7 +357,7 @@ impl Certificate {
     pub fn to_cert_info(&self) -> Result<CertificationRequestInfo> {
         let inner_tbs_cert = self.inner.tbs_certificate.clone();
 
-        let subject = params::DistinguishedName::from_x509_name(&inner_tbs_cert.subject);
+        let subject = params::DistinguishedName::from_x509_name(&inner_tbs_cert.subject)?;
 
         let subject_public_key =
             crate::key::PublicKey::from_x509spki(&inner_tbs_cert.subject_public_key_info)?;
@@ -456,7 +456,7 @@ impl Certificate {
     ///     .is_ca(true)  // Mark as CA certificate
     ///     .build();
     ///
-    /// let root_cert = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let root_cert = Certificate::new_self_signed(&cert_info, &key_pair)?;
     /// println!("Root CA certificate created");
     /// # Ok(())
     /// # }
@@ -489,10 +489,10 @@ impl Certificate {
     /// let cert_info = CertificationRequestInfo::builder()
     ///     .subject(subject)
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
-    ///     .extensions(vec![ExtensionParam::from_extension(san, false)])
+    ///     .extensions(vec![ExtensionParam::from_extension(san, false)?])
     ///     .build();
     ///
-    /// let cert = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let cert = Certificate::new_self_signed(&cert_info, &key_pair)?;
     /// println!("Self-signed certificate with SAN created");
     /// # Ok(())
     /// # }
@@ -503,7 +503,10 @@ impl Certificate {
     /// - **Development/testing**: Quick certificate generation for testing
     /// - **Internal services**: Certificates for internal-only applications
     /// - **Bootstrap certificates**: Initial certificates for certificate enrollment
-    pub fn new_self_signed(cert_info: &CertificationRequestInfo, key: &KeyPair) -> Self {
+    pub fn new_self_signed(
+        cert_info: &CertificationRequestInfo,
+        key: &KeyPair,
+    ) -> Result<Self> {
         let now = OffsetDateTime::now_utc();
         Self::new_self_signed_with_expiration(cert_info, key, now, now + time::Duration::days(365))
     }
@@ -556,7 +559,7 @@ impl Certificate {
     ///
     /// let now = OffsetDateTime::now_utc();
     ///
-    /// let root_cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365));
+    /// let root_cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365))?;
     /// println!("Root CA certificate created");
     /// # Ok(())
     /// # }
@@ -590,12 +593,12 @@ impl Certificate {
     /// let cert_info = CertificationRequestInfo::builder()
     ///     .subject(subject)
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
-    ///     .extensions(vec![ExtensionParam::from_extension(san, false)])
+    ///     .extensions(vec![ExtensionParam::from_extension(san, false)?])
     ///     .build();
     ///
     /// let now = OffsetDateTime::now_utc();
     ///
-    /// let cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365));
+    /// let cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365))?;
     /// println!("Self-signed certificate with SAN created");
     /// # Ok(())
     /// # }
@@ -611,7 +614,7 @@ impl Certificate {
         key: &KeyPair,
         not_before: OffsetDateTime,
         not_after: OffsetDateTime,
-    ) -> Self {
+    ) -> Result<Self> {
         log::debug!(
             "creating self-signed certificate for \"{}\"",
             cert_info.subject.common_name
@@ -640,8 +643,8 @@ struct SelfIssuer<'a> {
 }
 
 impl Issuer for SelfIssuer<'_> {
-    fn issuer_name(&self) -> params::DistinguishedName {
-        self.name.clone()
+    fn issuer_name(&self) -> Result<params::DistinguishedName> {
+        Ok(self.name.clone())
     }
 
     fn signing_key(&self) -> &KeyPair {
@@ -688,7 +691,7 @@ impl Issuer for SelfIssuer<'_> {
 ///     .is_ca(true)
 ///     .build();
 ///
-/// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
+/// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
 ///
 /// // Combine certificate and private key
 /// let ca_with_key = CertificateWithPrivateKey {
@@ -713,7 +716,7 @@ impl Issuer for SelfIssuer<'_> {
 /// # let ca_subject = DistinguishedName::builder().common_name("CA".to_string()).build();
 /// # let ca_cert_info = CertificationRequestInfo::builder()
 ///     .subject(ca_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key)).is_ca(true).build();
-/// # let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
+/// # let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
 /// # let ca_with_key = CertificateWithPrivateKey { cert: ca_cert, key: ca_key };
 ///
 /// // Generate end-entity key pair
@@ -731,7 +734,7 @@ impl Issuer for SelfIssuer<'_> {
 ///
 /// // Issue the server certificate using the CA
 /// let validity = Validity::for_days(365);
-/// let server_cert = ca_with_key.issue(&server_cert_info, validity);
+/// let server_cert = ca_with_key.issue(&server_cert_info, validity)?;
 ///
 /// println!("Server certificate issued by CA");
 /// # Ok::<(), certkit::error::CertKitError>(())
@@ -752,13 +755,10 @@ pub struct CertificateWithPrivateKey {
 }
 
 impl Issuer for CertificateWithPrivateKey {
-    fn issuer_name(&self) -> params::DistinguishedName {
+    fn issuer_name(&self) -> Result<params::DistinguishedName> {
         // The name of the issuer is the subject of the certificate
-        let cert_info = self
-            .cert
-            .to_cert_info()
-            .expect("Failed to extract cert info");
-        cert_info.subject
+        let cert_info = self.cert.to_cert_info()?;
+        Ok(cert_info.subject)
     }
 
     fn signing_key(&self) -> &KeyPair {

@@ -63,7 +63,7 @@ use crate::tbs_certificate::TbsCertificate;
 ///     .is_ca(true)
 ///     .build();
 ///
-/// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
+/// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
 /// let ca_issuer = CertificateWithPrivateKey {
 ///     cert: ca_cert,
 ///     key: ca_key,
@@ -81,7 +81,7 @@ use crate::tbs_certificate::TbsCertificate;
 ///     .build();
 ///
 /// let validity = Validity::for_days(90);
-/// let issued_cert = ca_issuer.issue(&end_entity_info, validity);
+/// let issued_cert = ca_issuer.issue(&end_entity_info, validity)?;
 ///
 /// println!("Certificate issued successfully");
 /// # Ok::<(), certkit::error::CertKitError>(())
@@ -103,8 +103,8 @@ use crate::tbs_certificate::TbsCertificate;
 /// }
 ///
 /// impl Issuer for CustomCA {
-///     fn issuer_name(&self) -> DistinguishedName {
-///         self.name.clone()
+///     fn issuer_name(&self) -> Result<DistinguishedName, certkit::error::CertKitError> {
+///         Ok(self.name.clone())
 ///     }
 ///
 ///     fn signing_key(&self) -> &KeyPair {
@@ -119,8 +119,9 @@ pub trait Issuer {
     /// and should uniquely identify the certificate authority.
     ///
     /// # Returns
-    /// A `DistinguishedName` representing the issuer's identity.
-    fn issuer_name(&self) -> DistinguishedName;
+    /// A `Result` containing the `DistinguishedName` representing the issuer's
+    /// identity, or a `CertKitError` if the name cannot be extracted.
+    fn issuer_name(&self) -> Result<DistinguishedName, crate::error::CertKitError>;
 
     /// Returns the signing key of the issuer.
     ///
@@ -200,7 +201,7 @@ pub trait Issuer {
     /// let ca_subject = DistinguishedName::builder().common_name("Test CA".to_string()).build();
     /// let ca_cert_info = CertificationRequestInfo::builder()
     ///     .subject(ca_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key)).is_ca(true).build();
-    /// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
+    /// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
     /// let ca_issuer = CertificateWithPrivateKey { cert: ca_cert, key: ca_key };
     ///
     /// // Create certificate request
@@ -211,12 +212,12 @@ pub trait Issuer {
     ///
     /// // Issue the certificate
     /// let validity = Validity::for_days(365);
-    /// let issued_cert = ca_issuer.issue(&cert_request, validity);
+    /// let issued_cert = ca_issuer.issue(&cert_request, validity)?;
     /// println!("Certificate issued with {} extensions",
     ///          issued_cert.to_cert_info()?.extensions.len());
     /// # Ok::<(), certkit::error::CertKitError>(())
     /// ```
-    fn issue(&self, cert_request: &CertificationRequestInfo, validity: Validity) -> Certificate {
+    fn issue(&self, cert_request: &CertificationRequestInfo, validity: Validity) -> Result<Certificate, crate::error::CertKitError> {
         let signature_algo = match self.signing_key() {
             #[cfg(feature = "rsa")]
             KeyPair::Rsa { .. } => SignatureAlgorithm::Sha256WithRSA,
@@ -239,6 +240,11 @@ pub trait Issuer {
 
         // Authority Key Identifier: SHA-1 of the signing (issuer) key, so issued
         // certs point back to this CA.
+        //
+        // SHA-1 is used here per RFC 5280 §4.2.1.2 Method 1 (the de facto
+        // standard for key identifier computation). This is NOT a collision-
+        // resistance application — the hash simply provides a short, stable
+        // identifier for path building, so SHA-1 is appropriate.
         let issuer_spki = self.signing_key().as_spki();
         let authority_key_id = AuthorityKeyIdentifier {
             key_identifier: <Sha1 as sha1::Digest>::digest(
@@ -260,7 +266,7 @@ pub trait Issuer {
             .to_vec(),
         };
 
-        let issuer_dn = self.issuer_name();
+        let issuer_dn = self.issuer_name()?;
 
         let basic_constraints = BasicConstraints {
             is_ca: cert_request.is_ca,
@@ -268,9 +274,9 @@ pub trait Issuer {
         };
 
         let mut extensions: Vec<ExtensionParam> = vec![
-            ExtensionParam::from_extension(basic_constraints, true),
-            ExtensionParam::from_extension(authority_key_id, false),
-            ExtensionParam::from_extension(subject_key_id, false),
+            ExtensionParam::from_extension(basic_constraints, true)?,
+            ExtensionParam::from_extension(authority_key_id, false)?,
+            ExtensionParam::from_extension(subject_key_id, false)?,
         ];
 
         let mut key_usage_flags: FlagSet<KeyUsages> = FlagSet::empty();
@@ -285,7 +291,16 @@ pub trait Issuer {
                 ExtendedKeyUsageOption::ClientAuth
                 | ExtendedKeyUsageOption::ServerAuth
                 | ExtendedKeyUsageOption::EmailProtection => {
-                    key_usage_flags |= KeyUsages::KeyEncipherment;
+                    // TLS 1.3 with ECDSA/Ed25519 requires DigitalSignature.
+                    // KeyEncipherment is only needed for RSA key transport
+                    // (TLS ≤1.2), so set it conditionally.
+                    key_usage_flags |= KeyUsages::DigitalSignature;
+                    if matches!(
+                        cert_request.subject_public_key,
+                        crate::key::PublicKey::Rsa(_)
+                    ) {
+                        key_usage_flags |= KeyUsages::KeyEncipherment;
+                    }
                 }
                 ExtendedKeyUsageOption::CodeSigning
                 | ExtendedKeyUsageOption::TimeStamping
@@ -297,14 +312,14 @@ pub trait Issuer {
 
         if !key_usage_flags.is_empty() {
             let key_usage = KeyUsage(key_usage_flags);
-            extensions.push(ExtensionParam::from_extension(key_usage, true));
+            extensions.push(ExtensionParam::from_extension(key_usage, true)?);
         }
 
         if !cert_request.usages.is_empty() {
             let extended_key_usage = ExtendedKeyUsage {
                 usage: cert_request.usages.clone(),
             };
-            extensions.push(ExtensionParam::from_extension(extended_key_usage, true));
+            extensions.push(ExtensionParam::from_extension(extended_key_usage, true)?);
         }
 
         let combined_extensions: Vec<ExtensionParam> = cert_request
@@ -330,17 +345,19 @@ pub trait Issuer {
 
         let signature = self
             .signing_key()
-            .sign_data(&tbs_cert_inner.to_der().unwrap())
-            .unwrap();
+            .sign_data(&tbs_cert_inner.to_der()?)
+            .map_err(|e| crate::error::CertKitError::CertificateError(
+                format!("signing failed: {e}"),
+            ))?;
         log::trace!("certificate signed ({} byte signature)", signature.len());
 
         let cert_inner = CertificateInner {
             signature_algorithm: tbs_cert_inner.signature.clone(),
             tbs_certificate: tbs_cert_inner,
-            signature: der::asn1::BitString::from_bytes(&signature).unwrap(),
+            signature: der::asn1::BitString::from_bytes(&signature)?,
         };
 
-        Certificate { inner: cert_inner }
+        Ok(Certificate { inner: cert_inner })
     }
 }
 
@@ -384,7 +401,7 @@ mod tests {
     #[test]
     fn p256_signature_algorithm_is_ecdsa_with_sha256() {
         let key = KeyPair::generate_ecdsa_p256();
-        let cert = Certificate::new_self_signed(&request("p256.ca", &key, true), &key);
+        let cert = Certificate::new_self_signed(&request("p256.ca", &key, true), &key).unwrap();
         let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_256;
         assert_eq!(cert.inner.signature_algorithm.oid, expected);
         assert_eq!(cert.inner.tbs_certificate.signature.oid, expected);
@@ -394,7 +411,7 @@ mod tests {
     #[test]
     fn p384_signature_algorithm_is_ecdsa_with_sha384() {
         let key = KeyPair::generate_ecdsa_p384();
-        let cert = Certificate::new_self_signed(&request("p384.ca", &key, true), &key);
+        let cert = Certificate::new_self_signed(&request("p384.ca", &key, true), &key).unwrap();
         let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_384;
         assert_eq!(cert.inner.signature_algorithm.oid, expected);
         assert_eq!(cert.inner.tbs_certificate.signature.oid, expected);
@@ -404,7 +421,7 @@ mod tests {
     #[test]
     fn p521_signature_algorithm_is_ecdsa_with_sha512() {
         let key = KeyPair::generate_ecdsa_p521();
-        let cert = Certificate::new_self_signed(&request("p521.ca", &key, true), &key);
+        let cert = Certificate::new_self_signed(&request("p521.ca", &key, true), &key).unwrap();
         let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_512;
         assert_eq!(cert.inner.signature_algorithm.oid, expected);
         assert_eq!(cert.inner.tbs_certificate.signature.oid, expected);
@@ -417,7 +434,7 @@ mod tests {
     #[test]
     fn issued_chain_links_aki_to_issuer_ski() {
         let root_key = KeyPair::generate_ecdsa_p256();
-        let root = Certificate::new_self_signed(&request("Root CA", &root_key, true), &root_key);
+        let root = Certificate::new_self_signed(&request("Root CA", &root_key, true), &root_key).unwrap();
         let root_ca = CertificateWithPrivateKey {
             cert: root,
             key: root_key,
@@ -427,14 +444,14 @@ mod tests {
         let int = root_ca.issue(
             &request("Intermediate CA", &int_key, true),
             Validity::for_days(365),
-        );
+        ).unwrap();
         let int_ca = CertificateWithPrivateKey {
             cert: int,
             key: int_key,
         };
 
         let leaf_key = KeyPair::generate_ecdsa_p256();
-        let leaf = int_ca.issue(&request("leaf", &leaf_key, false), Validity::for_days(365));
+        let leaf = int_ca.issue(&request("leaf", &leaf_key, false), Validity::for_days(365)).unwrap();
 
         let root_ski = extension::<SubjectKeyIdentifier>(&root_ca.cert).expect("root SKI");
         let int_ski = extension::<SubjectKeyIdentifier>(&int_ca.cert).expect("intermediate SKI");

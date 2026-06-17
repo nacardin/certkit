@@ -161,8 +161,8 @@ impl TbsCertificate {
     /// A `TbsCertificate` object.
     pub fn from_tbs_certificate_inner(inner: TbsCertificateInner) -> Result<Self, CertKitError> {
         // Convert from x509_cert's format
-        let issuer = DistinguishedName::from_x509_name(&inner.issuer);
-        let subject = DistinguishedName::from_x509_name(&inner.subject);
+        let issuer = DistinguishedName::from_x509_name(&inner.issuer)?;
+        let subject = DistinguishedName::from_x509_name(&inner.subject)?;
         let subject_public_key = PublicKey::from_x509spki(&inner.subject_public_key_info)?;
 
         // Convert extensions
@@ -245,7 +245,7 @@ mod tests {
             )
             .subject_public_key(PublicKey::from_key_pair(key))
             .build();
-        Certificate::new_self_signed(&request, key)
+        Certificate::new_self_signed(&request, key).unwrap()
     }
 
     // The OID->SignatureAlgorithm parse path must recognize the per-curve ECDSA

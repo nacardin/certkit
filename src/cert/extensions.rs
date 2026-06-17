@@ -262,12 +262,18 @@ impl ToAndFromX509Extension for AuthorityKeyIdentifier {
     fn from_x509_extension_value(extension: &[u8]) -> Result<Self, CertKitError> {
         let aki = x509_cert::ext::pkix::AuthorityKeyIdentifier::from_der(extension)?;
 
-        let authority_cert_issuer = aki.authority_cert_issuer.as_ref().and_then(|names| {
-            names.iter().find_map(|name| match name {
-                GeneralName::DirectoryName(dn) => Some(DistinguishedName::from_x509_name(dn)),
-                _ => None,
+        let authority_cert_issuer = aki
+            .authority_cert_issuer
+            .as_ref()
+            .and_then(|names| {
+                names.iter().find_map(|name| match name {
+                    GeneralName::DirectoryName(dn) => {
+                        Some(DistinguishedName::from_x509_name(dn))
+                    }
+                    _ => None,
+                })
             })
-        });
+            .transpose()?;
 
         Ok(Self {
             key_identifier: aki

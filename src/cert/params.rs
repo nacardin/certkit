@@ -89,36 +89,70 @@ impl DistinguishedName {
 
     /// Creates a `DistinguishedName` from an X.509-compatible format.
     ///
+    /// Parses all standard DN attributes: CN (2.5.4.3), OU (2.5.4.11),
+    /// O (2.5.4.10), L (2.5.4.7), ST (2.5.4.8), and C (2.5.4.6).
+    ///
     /// # Arguments
     /// * `x509dn` - An `x509_cert::name::DistinguishedName` object.
     ///
     /// # Returns
-    /// A `DistinguishedName` object.
-    pub fn from_x509_name(x509dn: &x509_cert::name::DistinguishedName) -> Self {
+    /// A `Result` containing the `DistinguishedName` or a `CertKitError` if
+    /// any attribute value cannot be decoded as UTF-8.
+    pub fn from_x509_name(
+        x509dn: &x509_cert::name::DistinguishedName,
+    ) -> Result<Self, CertKitError> {
         let mut common_name = String::new();
+        let mut organization_unit = None;
+        let mut organization = None;
+        let mut locality = None;
+        let mut state = None;
+        let mut country = None;
 
-        // Extract the common name from subject if available
         for rdn in x509dn.0.iter() {
             for attr in rdn.0.iter() {
-                if attr.oid.to_string() == "2.5.4.3" {
-                    // Common Name OID
-                    if let Ok(s) = attr.value.decode_as::<String>() {
-                        common_name = s.to_string();
-                    } else {
-                        panic!("Common name is not a PrintableString");
-                    }
+                let oid_str = attr.oid.to_string();
+                // DN attributes may be encoded as Utf8String, PrintableString,
+                // or other ASN.1 string types depending on the issuer and
+                // attribute (e.g. Country is typically PrintableString per X.520).
+                let value = attr
+                    .value
+                    .decode_as::<der::asn1::Utf8StringRef<'_>>()
+                    .map(|s| s.as_str().to_owned())
+                    .or_else(|_| {
+                        attr.value
+                            .decode_as::<der::asn1::PrintableStringRef<'_>>()
+                            .map(|s| s.as_str().to_owned())
+                    })
+                    .or_else(|_| {
+                        attr.value
+                            .decode_as::<der::asn1::Ia5StringRef<'_>>()
+                            .map(|s| s.as_str().to_owned())
+                    })
+                    .map_err(|_| {
+                        CertKitError::DecodingError(format!(
+                            "DN attribute {oid_str} value cannot be decoded as a string"
+                        ))
+                    })?;
+                match oid_str.as_str() {
+                    "2.5.4.3" => common_name = value,
+                    "2.5.4.11" => organization_unit = Some(value),
+                    "2.5.4.10" => organization = Some(value),
+                    "2.5.4.7" => locality = Some(value),
+                    "2.5.4.8" => state = Some(value),
+                    "2.5.4.6" => country = Some(value),
+                    _ => { /* skip unknown attributes */ }
                 }
             }
         }
 
-        DistinguishedName {
+        Ok(DistinguishedName {
             common_name,
-            organization_unit: None,
-            organization: None,
-            locality: None,
-            state: None,
-            country: None,
-        }
+            organization_unit,
+            organization,
+            locality,
+            state,
+            country,
+        })
     }
 }
 
@@ -177,15 +211,16 @@ impl ExtensionParam {
     ///
     /// # Returns
     /// An `ExtensionParam` object.
-    pub fn from_extension<E: ToAndFromX509Extension>(extension: E, critical: bool) -> Self {
-        let value = extension
-            .to_x509_extension_value()
-            .unwrap_or_else(|_| vec![]);
-        Self {
+    pub fn from_extension<E: ToAndFromX509Extension>(
+        extension: E,
+        critical: bool,
+    ) -> Result<Self, CertKitError> {
+        let value = extension.to_x509_extension_value()?;
+        Ok(Self {
             oid: E::OID,
             critical,
             value,
-        }
+        })
     }
 
     /// Decodes an `ExtensionParam` into a specific extension.
@@ -222,7 +257,7 @@ mod tests {
         assert_eq!(x509_name.to_string(), "CN=leaf.example.com");
 
         // And it round-trips back to the original common name with no other fields.
-        let round_tripped = DistinguishedName::from_x509_name(&x509_name);
+        let round_tripped = DistinguishedName::from_x509_name(&x509_name).unwrap();
         assert_eq!(round_tripped.common_name, "leaf.example.com");
         assert!(round_tripped.organization_unit.is_none());
         assert!(round_tripped.organization.is_none());

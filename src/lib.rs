@@ -53,7 +53,7 @@
 //!     .build();
 //!
 //! // Generate the self-signed certificate
-//! let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+//! let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
 //!
 //! // Export to PEM format
 //! let pem_cert = certificate.to_pem()?;
@@ -88,7 +88,7 @@
 //!     .is_ca(true)
 //!     .build();
 //!
-//! let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
+//! let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
 //! let ca_with_key = CertificateWithPrivateKey {
 //!     cert: ca_cert,
 //!     key: ca_key,
@@ -105,7 +105,7 @@
 //!     .build();
 //!
 //! let validity = Validity::for_days(365);
-//! let server_cert = ca_with_key.issue(&server_cert_info, validity);
+//! let server_cert = ca_with_key.issue(&server_cert_info, validity)?;
 //!
 //! println!("Server certificate issued successfully!");
 //! # Ok(())
@@ -145,12 +145,12 @@
 //!     .subject(subject)
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
 //!     .extensions(vec![
-//!         ExtensionParam::from_extension(san, false),
-//!         ExtensionParam::from_extension(eku, true),
+//!         ExtensionParam::from_extension(san, false)?,
+//!         ExtensionParam::from_extension(eku, true)?,
 //!     ])
 //!     .build();
 //!
-//! let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+//! let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
 //! println!("Certificate with extensions created successfully!");
 //! # Ok(())
 //! # }

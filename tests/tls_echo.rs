@@ -36,7 +36,7 @@ fn generate_ca(gen_key: &dyn Fn() -> KeyPair) -> CertificateWithPrivateKey {
         .is_ca(true)
         .build();
     CertificateWithPrivateKey {
-        cert: Certificate::new_self_signed(&info, &key),
+        cert: Certificate::new_self_signed(&info, &key).unwrap(),
         key,
     }
 }
@@ -56,7 +56,7 @@ fn generate_intermediate(
         .subject_public_key(PublicKey::from_key_pair(&key))
         .is_ca(true)
         .build();
-    let cert = parent.issue(&info, Validity::for_days(1));
+    let cert = parent.issue(&info, Validity::for_days(1)).unwrap();
     CertificateWithPrivateKey { cert, key }
 }
 
@@ -80,9 +80,9 @@ fn issue_end_entity(
         )
         .subject_public_key(PublicKey::from_key_pair(&key))
         .usages(vec![usage])
-        .extensions(vec![ExtensionParam::from_extension(san, false)])
+        .extensions(vec![ExtensionParam::from_extension(san, false).unwrap()])
         .build();
-    let cert = issuer.issue(&info, Validity::for_days(1));
+    let cert = issuer.issue(&info, Validity::for_days(1)).unwrap();
     (cert, key)
 }
 

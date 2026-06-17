@@ -55,7 +55,7 @@ impl IssueOpt {
         };
 
         let cert_info = cert_info(&self.dn, &key, &self.opts)?;
-        let cert = ca.issue(&cert_info, Validity::for_days(self.opts.days));
+        let cert = ca.issue(&cert_info, Validity::for_days(self.opts.days))?;
 
         emit(
             &cert,
