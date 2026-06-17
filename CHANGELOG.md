@@ -9,10 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `certkit-cli`: an `inspect` subcommand that parses a certificate (PEM or DER,
+- `certkit-cli`: a `cert_info` subcommand that parses a certificate (PEM or DER,
   or stdin via `-`) and prints its subject, issuer, serial, validity, public
   key, signature algorithm, and decoded extensions. Supports `--fingerprint`
   (SHA-256 of the DER) and `--json` for machine-readable output.
+- `certkit-cli`: `--email` for rfc822 Subject Alternative Names.
+
+### Changed
+
+- **`certkit-cli`: the command and argument surface now mirrors Botan's CLI.**
+  These are breaking changes for the unreleased CLI:
+  - Subcommands renamed: `generate-key` → `keygen`, `self-signed` →
+    `gen_self_signed`, `inspect` → `cert_info` (`issue` is unchanged).
+  - Key selection uses Botan's vocabulary: `--algorithm`/`-a` (alias `--algo`)
+    takes `RSA`, `ECDSA`, or `Ed25519`, and the key shape is chosen with
+    `--params` (RSA bits, e.g. `3072`, or an ECDSA curve, e.g. `secp256r1`).
+    The previous `p256`/`p384`/`p521` values and the `--rsa-bits` flag are gone.
+  - The subject common name is now a positional argument instead of
+    `--common-name`.
+  - `--san` is replaced by `--dns` (DNS names) and `--email` (rfc822 names).
 
 ## [0.1.2]
 

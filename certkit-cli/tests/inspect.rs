@@ -1,6 +1,6 @@
 //! Drives the built `certkit` binary to produce certificates and checks that
 //! `certkit inspect` reports their fields. The fingerprint is cross-checked
-//! against `openssl` when it is installed, so the two tools must agree.
+//! against `botan` when it is installed, so the two tools must agree.
 
 use std::io::Write;
 use std::path::Path;
@@ -19,13 +19,14 @@ fn write_leaf(dir: &Path) -> std::path::PathBuf {
     let key = dir.join("leaf.key");
     let status = certkit()
         .args([
-            "self-signed",
-            "--common-name",
+            "gen_self_signed",
             "leaf.example.com",
-            "--san",
+            "--dns",
             "leaf.example.com",
-            "--san",
+            "--dns",
             "www.example.com",
+            "--email",
+            "admin@example.com",
             "--eku",
             "server-auth",
             "--eku",
@@ -33,15 +34,17 @@ fn write_leaf(dir: &Path) -> std::path::PathBuf {
             "--days",
             "30",
             "--algorithm",
-            "p256",
+            "ECDSA",
+            "--params",
+            "secp256r1",
         ])
         .arg("--key-out")
         .arg(&key)
         .arg("--out")
         .arg(&cert)
         .status()
-        .expect("failed to run certkit self-signed");
-    assert!(status.success(), "certkit self-signed failed");
+        .expect("failed to run certkit gen_self_signed");
+    assert!(status.success(), "certkit gen_self_signed failed");
     cert
 }
 
@@ -50,10 +53,10 @@ fn inspect_reports_core_fields() {
     let dir = tempdir().unwrap();
     let cert = write_leaf(dir.path());
 
-    let out = certkit().arg("inspect").arg(&cert).output().unwrap();
+    let out = certkit().arg("cert_info").arg(&cert).output().unwrap();
     assert!(
         out.status.success(),
-        "inspect failed: {}",
+        "cert_info failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     let text = String::from_utf8_lossy(&out.stdout);
@@ -70,6 +73,10 @@ fn inspect_reports_core_fields() {
         "SAN label: {text}"
     );
     assert!(text.contains("DNS:www.example.com"), "SAN value: {text}");
+    assert!(
+        text.contains("email:admin@example.com"),
+        "email SAN: {text}"
+    );
     assert!(text.contains("Extended Key Usage"), "EKU label: {text}");
     assert!(text.contains("serverAuth, clientAuth"), "EKU value: {text}");
     assert!(text.contains("Basic Constraints"), "BC label: {text}");
@@ -83,13 +90,12 @@ fn inspect_ca_reports_cert_sign() {
     let key = dir.path().join("ca.key");
     let status = certkit()
         .args([
-            "self-signed",
-            "--common-name",
+            "gen_self_signed",
             "Example Root CA",
             "--ca",
             "--algorithm",
-            "rsa",
-            "--rsa-bits",
+            "RSA",
+            "--params",
             "2048",
         ])
         .arg("--key-out")
@@ -97,10 +103,10 @@ fn inspect_ca_reports_cert_sign() {
         .arg("--out")
         .arg(&cert)
         .status()
-        .expect("failed to run certkit self-signed");
+        .expect("failed to run certkit gen_self_signed");
     assert!(status.success());
 
-    let out = certkit().arg("inspect").arg(&cert).output().unwrap();
+    let out = certkit().arg("cert_info").arg(&cert).output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("RSA (2048 bit)"), "rsa size: {text}");
     assert!(text.contains("CA=true"), "BC value: {text}");
@@ -113,7 +119,7 @@ fn inspect_json_and_fingerprint() {
     let cert = write_leaf(dir.path());
 
     let out = certkit()
-        .arg("inspect")
+        .arg("cert_info")
         .arg(&cert)
         .args(["--json", "--fingerprint"])
         .output()
@@ -127,23 +133,24 @@ fn inspect_json_and_fingerprint() {
     assert!(text.contains("\"fingerprint_sha256\":\""), "{text}");
     assert!(text.contains("\"extensions\":["), "{text}");
 
-    // The fingerprint must agree with openssl when it is available.
-    if Command::new("openssl").arg("version").output().is_ok() {
-        let ssl = Command::new("openssl")
-            .args(["x509", "-noout", "-fingerprint", "-sha256", "-in"])
+    // The fingerprint must agree with botan when it is available.
+    if Command::new("botan").arg("version").output().is_ok() {
+        let botan = Command::new("botan")
+            .args(["cert_info", "--fingerprint"])
             .arg(&cert)
             .output()
             .unwrap();
-        let ssl_fp = String::from_utf8_lossy(&ssl.stdout)
-            .split('=')
-            .nth(1)
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase();
-        assert!(!ssl_fp.is_empty());
+        let botan_out = String::from_utf8_lossy(&botan.stdout);
+        let botan_fp = botan_out
+            .lines()
+            .find(|l| l.starts_with("Fingerprint:"))
+            .and_then(|l| l.split_once(": "))
+            .map(|(_, fp)| fp.trim().to_lowercase())
+            .expect("botan did not print a Fingerprint line");
+        assert!(!botan_fp.is_empty());
         assert!(
-            text.contains(&ssl_fp),
-            "fingerprint mismatch:\ncertkit json: {text}\nopenssl: {ssl_fp}"
+            text.contains(&botan_fp),
+            "fingerprint mismatch:\ncertkit json: {text}\nbotan: {botan_fp}"
         );
     }
 }
@@ -155,13 +162,12 @@ fn inspect_reads_der_from_stdin() {
     let key = dir.path().join("leaf.key");
     let status = certkit()
         .args([
-            "self-signed",
-            "--common-name",
+            "gen_self_signed",
             "stdin.example.com",
             "--format",
             "der",
             "--algorithm",
-            "ed25519",
+            "Ed25519",
         ])
         .arg("--key-out")
         .arg(&key)
@@ -173,7 +179,7 @@ fn inspect_reads_der_from_stdin() {
     let der = std::fs::read(&cert).unwrap();
 
     let mut child = certkit()
-        .args(["inspect", "-"])
+        .args(["cert_info", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

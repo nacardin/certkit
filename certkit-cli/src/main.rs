@@ -1,10 +1,10 @@
 //! Command-line interface for [`certkit`].
 //!
-//! Provides four subcommands:
-//! - `generate-key` — generate a private key and emit it as PKCS#8 PEM.
-//! - `self-signed` — create a self-signed certificate (optionally a CA).
+//! Subcommand names follow Botan's CLI:
+//! - `keygen` — generate a private key and emit it as PKCS#8 PEM.
+//! - `gen_self_signed` — create a self-signed certificate (optionally a CA).
 //! - `issue` — issue a certificate signed by an existing CA certificate/key.
-//! - `inspect` — parse a certificate and print its fields.
+//! - `cert_info` — parse a certificate and print its fields.
 //!
 //! Certificate data is written to `--out` (or stdout); a freshly generated
 //! private key is written to `--key-out` (or stdout). Informational messages go
@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::{fs, process};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use der::asn1::Ia5String;
 use der::{Decode, DecodePem, Encode};
 use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime};
@@ -22,7 +23,7 @@ use x509_cert::Certificate as X509Certificate;
 use x509_cert::ext::pkix;
 use x509_cert::ext::pkix::name::GeneralName;
 
-use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName};
+use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName, ToAndFromX509Extension};
 use certkit::cert::params::{
     CertificationRequestInfo, DistinguishedName, ExtensionParam, Validity,
 };
@@ -46,23 +47,71 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Generate a new private key (PKCS#8 PEM).
+    #[command(name = "keygen")]
     GenerateKey(GenerateKeyArgs),
     /// Create a self-signed certificate.
+    #[command(name = "gen_self_signed")]
     SelfSigned(SelfSignedArgs),
     /// Issue a certificate signed by an existing CA.
+    #[command(name = "issue")]
     Issue(IssueArgs),
     /// Parse a certificate and print its fields.
+    #[command(name = "cert_info")]
     Inspect(InspectArgs),
 }
 
-/// Cryptographic algorithm for a generated key.
+/// Key algorithm, named as Botan's `keygen --algo` expects.
+///
+/// The key shape (RSA size, ECDSA curve) is selected with `--params`, also
+/// following Botan: `--params 2048` for RSA, `--params secp256r1` for ECDSA.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum Algorithm {
+    #[value(name = "RSA")]
     Rsa,
+    #[value(name = "ECDSA")]
+    Ecdsa,
+    #[value(name = "Ed25519")]
+    Ed25519,
+}
+
+/// Key parameters chosen with `--params`, disambiguated by value: a bare number
+/// is an RSA key size, anything else is an ECDSA curve name (as in Botan).
+#[derive(Copy, Clone, Debug)]
+enum KeyParams {
+    /// RSA modulus size in bits.
+    Bits(u32),
+    /// ECDSA curve.
+    Curve(Curve),
+}
+
+/// A NIST/SECG curve certkit can generate.
+#[derive(Copy, Clone, Debug)]
+enum Curve {
     P256,
     P384,
     P521,
-    Ed25519,
+}
+
+impl std::str::FromStr for KeyParams {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if let Ok(bits) = s.parse::<u32>() {
+            return Ok(KeyParams::Bits(bits));
+        }
+        let curve = match s.to_ascii_lowercase().as_str() {
+            "secp256r1" | "prime256v1" | "p256" | "p-256" => Curve::P256,
+            "secp384r1" | "p384" | "p-384" => Curve::P384,
+            "secp521r1" | "p521" | "p-521" => Curve::P521,
+            _ => {
+                return Err(format!(
+                    "expected an RSA key size or an ECDSA curve \
+                     (secp256r1, secp384r1, secp521r1); got '{s}'"
+                ));
+            }
+        };
+        Ok(KeyParams::Curve(curve))
+    }
 }
 
 /// Output encoding for certificates.
@@ -98,12 +147,13 @@ impl From<EkuOpt> for ExtendedKeyUsageOption {
 
 #[derive(Args)]
 struct GenerateKeyArgs {
-    /// Key algorithm.
-    #[arg(short, long, value_enum, default_value_t = Algorithm::P256)]
+    /// Key algorithm (RSA, ECDSA, or Ed25519).
+    #[arg(short, long, alias = "algo", value_enum, ignore_case = true, default_value_t = Algorithm::Ecdsa)]
     algorithm: Algorithm,
-    /// RSA key size in bits (only used with `--algorithm rsa`).
-    #[arg(long, default_value_t = 2048)]
-    rsa_bits: usize,
+    /// Key parameters: RSA size in bits (default 2048) or ECDSA curve
+    /// (secp256r1, secp384r1, secp521r1; default secp256r1). Ignored for Ed25519.
+    #[arg(long)]
+    params: Option<KeyParams>,
     /// Write the key here instead of stdout.
     #[arg(short, long)]
     out: Option<PathBuf>,
@@ -112,8 +162,8 @@ struct GenerateKeyArgs {
 /// Subject distinguished name fields, shared by the certificate subcommands.
 #[derive(Args)]
 struct DnArgs {
-    /// Subject common name (CN).
-    #[arg(long)]
+    /// Subject common name (CN), given positionally (as in Botan).
+    #[arg(value_name = "COMMON_NAME")]
     common_name: String,
     /// Subject country (C).
     #[arg(long)]
@@ -136,11 +186,13 @@ struct DnArgs {
 #[derive(Args)]
 struct KeySourceArgs {
     /// Algorithm for a freshly generated key (ignored when `--key` is given).
-    #[arg(short, long, value_enum, default_value_t = Algorithm::P256)]
+    #[arg(short, long, alias = "algo", value_enum, ignore_case = true, default_value_t = Algorithm::Ecdsa)]
     algorithm: Algorithm,
-    /// RSA key size in bits (only used with `--algorithm rsa`).
-    #[arg(long, default_value_t = 2048)]
-    rsa_bits: usize,
+    /// Key parameters for a freshly generated key: RSA size in bits (default
+    /// 2048) or ECDSA curve (secp256r1, secp384r1, secp521r1; default
+    /// secp256r1). Ignored for Ed25519 and when `--key` is given.
+    #[arg(long)]
+    params: Option<KeyParams>,
     /// Use an existing private key (PKCS#8 PEM) instead of generating one.
     #[arg(long)]
     key: Option<PathBuf>,
@@ -153,8 +205,11 @@ struct KeySourceArgs {
 #[derive(Args)]
 struct CertOptArgs {
     /// DNS Subject Alternative Name (repeatable).
-    #[arg(long = "san")]
-    san: Vec<String>,
+    #[arg(long)]
+    dns: Vec<String>,
+    /// Email (rfc822) Subject Alternative Name (repeatable).
+    #[arg(long)]
+    email: Vec<String>,
     /// Extended Key Usage purpose (repeatable).
     #[arg(long = "eku", value_enum)]
     eku: Vec<EkuOpt>,
@@ -228,7 +283,7 @@ fn run(cli: Cli) -> Result<()> {
 }
 
 fn generate_key(args: GenerateKeyArgs) -> Result<()> {
-    let key = generate(args.algorithm, args.rsa_bits)?;
+    let key = generate(args.algorithm, args.params)?;
     let pem = key.encode_private_key_pem()?;
     write_bytes(&args.out, pem.as_bytes())?;
     if let Some(path) = &args.out {
@@ -246,7 +301,7 @@ fn self_signed(args: SelfSignedArgs) -> Result<()> {
         args.opts.format,
     )?;
 
-    let cert_info = cert_info(&args.dn, &key, &args.opts);
+    let cert_info = cert_info(&args.dn, &key, &args.opts)?;
     let now = OffsetDateTime::now_utc();
     let cert = Certificate::new_self_signed_with_expiration(
         &cert_info,
@@ -279,7 +334,7 @@ fn issue(args: IssueArgs) -> Result<()> {
         key: ca_key,
     };
 
-    let cert_info = cert_info(&args.dn, &key, &args.opts);
+    let cert_info = cert_info(&args.dn, &key, &args.opts)?;
     let cert = ca.issue(&cert_info, Validity::for_days(args.opts.days));
 
     emit(
@@ -676,15 +731,41 @@ fn json_string(s: &str) -> String {
 
 const UNDECODABLE: &str = "(undecodable)";
 
-/// Generates a key pair for the requested algorithm.
-fn generate(algorithm: Algorithm, rsa_bits: usize) -> Result<KeyPair> {
-    Ok(match algorithm {
-        Algorithm::Rsa => KeyPair::generate_rsa(rsa_bits)?,
-        Algorithm::P256 => KeyPair::generate_ecdsa_p256(),
-        Algorithm::P384 => KeyPair::generate_ecdsa_p384(),
-        Algorithm::P521 => KeyPair::generate_ecdsa_p521(),
-        Algorithm::Ed25519 => KeyPair::generate_ed25519(),
-    })
+/// Generates a key pair for the requested algorithm and `--params`.
+///
+/// `--params` is parsed (and curve names normalized) when the arguments are
+/// read, so here it only remains to reject a parameter that doesn't match the
+/// chosen algorithm — e.g. a curve for RSA, or a key size for ECDSA.
+fn generate(algorithm: Algorithm, params: Option<KeyParams>) -> Result<KeyPair> {
+    match algorithm {
+        Algorithm::Rsa => {
+            let bits = match params {
+                Some(KeyParams::Bits(bits)) => bits as usize,
+                Some(KeyParams::Curve(_)) => {
+                    return Err("RSA takes a key size, not a curve; e.g. --params 2048".into());
+                }
+                None => 2048,
+            };
+            Ok(KeyPair::generate_rsa(bits)?)
+        }
+        Algorithm::Ecdsa => {
+            let curve = match params {
+                Some(KeyParams::Curve(curve)) => curve,
+                Some(KeyParams::Bits(_)) => {
+                    return Err(
+                        "ECDSA takes a curve, not a key size; e.g. --params secp256r1".into(),
+                    );
+                }
+                None => Curve::P256,
+            };
+            Ok(match curve {
+                Curve::P256 => KeyPair::generate_ecdsa_p256(),
+                Curve::P384 => KeyPair::generate_ecdsa_p384(),
+                Curve::P521 => KeyPair::generate_ecdsa_p521(),
+            })
+        }
+        Algorithm::Ed25519 => Ok(KeyPair::generate_ed25519()),
+    }
 }
 
 /// Loads the key from `--key`, or generates one. Returns `(key, generated)`.
@@ -694,12 +775,12 @@ fn key_pair(args: &KeySourceArgs) -> Result<(KeyPair, bool)> {
             KeyPair::import_from_pkcs8_pem(&fs::read_to_string(path)?)?,
             false,
         )),
-        None => Ok((generate(args.algorithm, args.rsa_bits)?, true)),
+        None => Ok((generate(args.algorithm, args.params)?, true)),
     }
 }
 
 /// Builds the certification request info from the DN, key, and options.
-fn cert_info(dn: &DnArgs, key: &KeyPair, opts: &CertOptArgs) -> CertificationRequestInfo {
+fn cert_info(dn: &DnArgs, key: &KeyPair, opts: &CertOptArgs) -> Result<CertificationRequestInfo> {
     let subject = DistinguishedName::builder()
         .common_name(dn.common_name.clone())
         .maybe_country(dn.country.clone())
@@ -712,22 +793,47 @@ fn cert_info(dn: &DnArgs, key: &KeyPair, opts: &CertOptArgs) -> CertificationReq
     let usages: Vec<ExtendedKeyUsageOption> = opts.eku.iter().map(|e| (*e).into()).collect();
 
     let mut extensions = Vec::new();
-    if !opts.san.is_empty() {
-        extensions.push(ExtensionParam::from_extension(
-            SubjectAltName {
-                names: opts.san.clone(),
-            },
-            false,
-        ));
+    if let Some(san) = build_san(&opts.dns, &opts.email)? {
+        extensions.push(san);
     }
 
-    CertificationRequestInfo::builder()
+    Ok(CertificationRequestInfo::builder()
         .subject(subject)
         .subject_public_key(PublicKey::from_key_pair(key))
         .is_ca(opts.ca)
         .usages(usages)
         .extensions(extensions)
-        .build()
+        .build())
+}
+
+/// Builds a Subject Alternative Name extension from DNS and email entries.
+///
+/// certkit's own `SubjectAltName` only models DNS names, so the extension is
+/// assembled directly from `x509_cert` general names to also carry rfc822
+/// (email) entries, then wrapped as a raw `ExtensionParam`.
+fn build_san(dns: &[String], email: &[String]) -> Result<Option<ExtensionParam>> {
+    if dns.is_empty() && email.is_empty() {
+        return Ok(None);
+    }
+
+    let mut names = Vec::new();
+    for name in dns {
+        let ia5 =
+            Ia5String::try_from(name.clone()).map_err(|_| format!("invalid DNS name: {name}"))?;
+        names.push(GeneralName::DnsName(ia5));
+    }
+    for addr in email {
+        let ia5 = Ia5String::try_from(addr.clone())
+            .map_err(|_| format!("invalid email address: {addr}"))?;
+        names.push(GeneralName::Rfc822Name(ia5));
+    }
+
+    let san = pkix::SubjectAltName(names);
+    Ok(Some(ExtensionParam {
+        oid: SubjectAltName::OID,
+        critical: false,
+        value: san.to_der()?,
+    }))
 }
 
 /// Loads a CA certificate from a PEM or DER file (auto-detected).

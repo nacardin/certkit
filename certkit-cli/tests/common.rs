@@ -47,8 +47,8 @@ pub fn build_chain(dir: &Path, root_alg: &str, intermediate_alg: &str, leaf_alg:
 
     // Self-signed root CA.
     run(certkit()
-        .args(["self-signed", "--common-name", "Test Root CA", "--ca"])
-        .args(["--algorithm", root_alg])
+        .args(["gen_self_signed", "Test Root CA", "--ca"])
+        .args(algo_args(root_alg))
         .arg("--key-out")
         .arg(&root_key)
         .arg("--out")
@@ -56,8 +56,8 @@ pub fn build_chain(dir: &Path, root_alg: &str, intermediate_alg: &str, leaf_alg:
 
     // Intermediate CA, signed by the root.
     run(certkit()
-        .args(["issue", "--common-name", "Test Intermediate CA", "--ca"])
-        .args(["--algorithm", intermediate_alg])
+        .args(["issue", "Test Intermediate CA", "--ca"])
+        .args(algo_args(intermediate_alg))
         .arg("--ca-cert")
         .arg(&root)
         .arg("--ca-key")
@@ -69,14 +69,8 @@ pub fn build_chain(dir: &Path, root_alg: &str, intermediate_alg: &str, leaf_alg:
 
     // Leaf, signed by the intermediate.
     run(certkit()
-        .args([
-            "issue",
-            "--common-name",
-            "leaf.example.com",
-            "--eku",
-            "server-auth",
-        ])
-        .args(["--algorithm", leaf_alg])
+        .args(["issue", "leaf.example.com", "--eku", "server-auth"])
+        .args(algo_args(leaf_alg))
         .arg("--ca-cert")
         .arg(&intermediate)
         .arg("--ca-key")
@@ -90,6 +84,19 @@ pub fn build_chain(dir: &Path, root_alg: &str, intermediate_alg: &str, leaf_alg:
         root,
         intermediate,
         leaf,
+    }
+}
+
+/// Translates a per-level algorithm label into the Botan-style `--algorithm`
+/// (and `--params`) arguments certkit now expects.
+fn algo_args(alg: &str) -> Vec<&'static str> {
+    match alg {
+        "p256" => vec!["--algorithm", "ECDSA", "--params", "secp256r1"],
+        "p384" => vec!["--algorithm", "ECDSA", "--params", "secp384r1"],
+        "p521" => vec!["--algorithm", "ECDSA", "--params", "secp521r1"],
+        "ed25519" => vec!["--algorithm", "Ed25519"],
+        "rsa" => vec!["--algorithm", "RSA"],
+        other => panic!("unknown algorithm label: {other}"),
     }
 }
 
