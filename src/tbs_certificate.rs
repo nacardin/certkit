@@ -28,9 +28,9 @@ pub struct TbsCertificate {
     pub signature_algorithm: SignatureAlgorithm,
     /// Certificate issuer distinguished name
     pub issuer: DistinguishedName,
-    /// Not before time (in seconds since Unix epoch)
+    /// Start of the certificate's validity period
     pub not_before: time::OffsetDateTime,
-    /// Not after time (in seconds since Unix epoch)
+    /// End of the certificate's validity period
     pub not_after: time::OffsetDateTime,
     /// Certificate subject distinguished name
     pub subject: DistinguishedName,

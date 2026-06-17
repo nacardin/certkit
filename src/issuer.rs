@@ -27,12 +27,11 @@ use crate::tbs_certificate::TbsCertificate;
 ///
 /// # Certificate Issuance Process
 ///
-/// 1. **Validation**: Verify the certificate request information
-/// 2. **Extension Processing**: Add appropriate extensions based on request and CA policy
-/// 3. **Signature Algorithm Selection**: Choose algorithm based on CA's key type
-/// 4. **TBS Certificate Creation**: Build the "To Be Signed" certificate structure
-/// 5. **Signing**: Create digital signature using the CA's private key
-/// 6. **Certificate Assembly**: Combine TBS certificate with signature
+/// 1. **Extension Processing**: Add appropriate extensions based on request and CA policy
+/// 2. **Signature Algorithm Selection**: Choose algorithm based on CA's key type
+/// 3. **TBS Certificate Creation**: Build the "To Be Signed" certificate structure
+/// 4. **Signing**: Create digital signature using the CA's private key
+/// 5. **Certificate Assembly**: Combine TBS certificate with signature
 ///
 /// # Implementations
 ///
@@ -111,12 +110,6 @@ use crate::tbs_certificate::TbsCertificate;
 ///     fn signing_key(&self) -> &KeyPair {
 ///         &self.key
 ///     }
-///
-///     fn serial_number(&self) -> Vec<u8> {
-///         let serial = self.next_serial.get();
-///         self.next_serial.set(serial + 1);
-///         serial.to_be_bytes().to_vec()
-///     }
 /// }
 /// ```
 pub trait Issuer {
@@ -147,13 +140,24 @@ pub trait Issuer {
     /// This method should return a different value for each certificate issued.
     ///
     /// # Returns
-    /// A byte vector containing the serial number for the next certificate.
+    /// A 20-byte vector containing a CSPRNG-generated serial number that
+    /// conforms to RFC 5280 §4.1.2.2 (positive, non-zero, at most 20 octets).
     ///
-    /// # Implementation Notes
-    /// - Serial numbers should be unique within the CA's scope
-    /// - Consider using incrementing counters or random values
-    /// - Avoid predictable patterns that could aid attacks
-    fn serial_number(&self) -> Vec<u8>;
+    /// # Default Implementation
+    /// Generates 20 random bytes via [`rand_core::OsRng`], clears the leading
+    /// bit (so the DER INTEGER is positive), and sets the trailing bit (so the
+    /// value is never zero). Override this if you need deterministic or
+    /// counter-based serial numbers.
+    fn serial_number(&self) -> Vec<u8> {
+        use rand_core::RngCore;
+        let mut buf = [0u8; 20];
+        rand_core::OsRng.fill_bytes(&mut buf);
+        // Ensure leading bit is 0 so the DER INTEGER is positive.
+        buf[0] &= 0x7F;
+        // Ensure non-zero.
+        buf[19] |= 0x01;
+        buf.to_vec()
+    }
 
     /// Issues a certificate based on the provided certification request information.
     ///
@@ -176,8 +180,9 @@ pub trait Issuer {
     ///
     /// # Extension Processing
     /// The method automatically adds several extensions:
-    /// - **Basic Constraints**: Set to CA=true for the issuer
+    /// - **Basic Constraints**: Set according to the request's `is_ca` flag
     /// - **Authority Key Identifier**: Links to the issuing CA
+    /// - **Subject Key Identifier**: SHA-1 hash of the subject's public key
     /// - **Key Usage**: Based on the certificate type (CA vs end-entity)
     /// - **Extended Key Usage**: Based on requested usage types
     ///
@@ -311,7 +316,7 @@ pub trait Issuer {
         log::trace!("certificate has {} extension(s)", combined_extensions.len());
 
         let tbs_cert = TbsCertificate {
-            serial_number: vec![1],
+            serial_number: self.serial_number(),
             signature_algorithm: signature_algo.clone(),
             issuer: issuer_dn,
             not_before: validity.not_before,

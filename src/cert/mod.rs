@@ -12,18 +12,6 @@ use x509_cert::certificate::CertificateInner;
 use crate::issuer::Issuer;
 use crate::key::KeyPair;
 
-// use crate::{key::KeyPair, pki::sign_data};
-
-// #[derive(Debug, Clone, Builder)]
-// pub struct TbsCertificate {
-//     pub serial_number: Vec<u8>,
-//     pub issuer_dn: DistinguishedName,
-//     pub validity: Validity,
-//     pub subject_dn: DistinguishedName,
-//     pub subject_public_key: PublicKey,
-//     pub extensions: Vec<ExtensionParam>,
-// }
-
 /// Represents the supported signature algorithms for certificates.
 ///
 /// This enum defines the cryptographic signature algorithms that can be used
@@ -659,10 +647,6 @@ impl Issuer for SelfIssuer<'_> {
     fn signing_key(&self) -> &KeyPair {
         self.key
     }
-
-    fn serial_number(&self) -> Vec<u8> {
-        vec![1]
-    }
 }
 
 /// A certificate paired with its corresponding private key.
@@ -779,14 +763,5 @@ impl Issuer for CertificateWithPrivateKey {
 
     fn signing_key(&self) -> &KeyPair {
         &self.key
-    }
-
-    fn serial_number(&self) -> Vec<u8> {
-        self.cert
-            .inner
-            .tbs_certificate
-            .serial_number
-            .as_bytes()
-            .to_vec()
     }
 }

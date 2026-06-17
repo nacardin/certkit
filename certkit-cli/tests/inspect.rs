@@ -1,5 +1,5 @@
 //! Drives the built `certkit` binary to produce certificates and checks that
-//! `certkit inspect` reports their fields. The fingerprint is cross-checked
+//! `certkit cert_info` reports their fields. The fingerprint is cross-checked
 //! against `botan` when it is installed, so the two tools must agree.
 
 use std::io::Write;

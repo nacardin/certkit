@@ -13,7 +13,7 @@ A high-level Rust library providing abstractions over certificates and keys. Thi
   - Ed25519
 - PEM and DER format support
 - Modern Rust implementation with strong type safety
-- Zero-copy parsing and serialization with `der` crate
+- Type-safe parsing and serialization with `der` crate
 
 ## Usage
 
@@ -60,7 +60,7 @@ At least one algorithm feature must be enabled; building with none is a compile 
 
 - `x509-cert`: X.509 certificate handling
 - `der`: ASN.1 DER encoding/decoding
-- `pkcs8`: Private key cryptography standard
+- `pkcs8`: Public-Key Cryptography Standards #8
 - `rsa`, `p256`, `ed25519-dalek`: Cryptographic algorithms
 - `time`: Time handling for certificate validity
 - `pem`: PEM format encoding/decoding

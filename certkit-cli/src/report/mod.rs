@@ -27,7 +27,7 @@ struct ExtReport {
     summary: String,
 }
 
-/// The fields of a certificate that `inspect` reports.
+/// The fields of a certificate that `cert_info` reports.
 pub struct CertReport {
     subject: String,
     issuer: String,
