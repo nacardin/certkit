@@ -13,6 +13,7 @@ use crate::cert::extensions::ExtendedKeyUsage;
 use crate::cert::extensions::ExtendedKeyUsageOption;
 use crate::cert::extensions::KeyUsage;
 use crate::cert::extensions::KeyUsages;
+use crate::cert::extensions::SubjectKeyIdentifier;
 use crate::cert::params::Validity;
 use crate::cert::params::{CertificationRequestInfo, DistinguishedName, ExtensionParam};
 use crate::key::KeyPair;
@@ -224,15 +225,30 @@ pub trait Issuer {
             KeyPair::Ed25519 { .. } => SignatureAlgorithm::Sha256WithEdDSA,
         };
 
-        let public_key_info = self.signing_key().as_spki();
-        let key_id = <Sha1 as sha1::Digest>::digest(public_key_info.subject_public_key.raw_bytes());
-        let issuer_dn = self.issuer_name();
-
+        // Authority Key Identifier: SHA-1 of the signing (issuer) key, so issued
+        // certs point back to this CA.
+        let issuer_spki = self.signing_key().as_spki();
         let authority_key_id = AuthorityKeyIdentifier {
-            key_identifier: key_id.to_vec(),
-            authority_cert_issuer: issuer_dn.clone(),
-            authority_cert_serial_number: self.serial_number(),
+            key_identifier: <Sha1 as sha1::Digest>::digest(
+                issuer_spki.subject_public_key.raw_bytes(),
+            )
+            .to_vec(),
+            // PKIX profile: identify the issuer by key id only.
+            authority_cert_issuer: None,
+            authority_cert_serial_number: None,
         };
+
+        // Subject Key Identifier: SHA-1 of the subject's own key, computed the
+        // same way, so a child's AKI matches this cert's SKI during path building.
+        let subject_spki = cert_request.subject_public_key.as_spki();
+        let subject_key_id = SubjectKeyIdentifier {
+            key_identifier: <Sha1 as sha1::Digest>::digest(
+                subject_spki.subject_public_key.raw_bytes(),
+            )
+            .to_vec(),
+        };
+
+        let issuer_dn = self.issuer_name();
 
         let basic_constraints = BasicConstraints {
             is_ca: cert_request.is_ca,
@@ -242,6 +258,7 @@ pub trait Issuer {
         let mut extensions: Vec<ExtensionParam> = vec![
             ExtensionParam::from_extension(basic_constraints, true),
             ExtensionParam::from_extension(authority_key_id, false),
+            ExtensionParam::from_extension(subject_key_id, false),
         ];
 
         let mut key_usage_flags: FlagSet<KeyUsages> = FlagSet::empty();

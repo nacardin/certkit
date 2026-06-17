@@ -835,6 +835,44 @@ impl PublicKey {
         }
     }
 
+    /// Converts the public key to an X.509 `SubjectPublicKeyInfo`.
+    ///
+    /// Mirrors [`KeyPair::as_spki`] for the public half. Deriving a key
+    /// identifier from this SPKI yields the same value a CA derives from its
+    /// signing key, so a subject key identifier here matches the authority key
+    /// identifier of certificates this key later signs.
+    pub fn as_spki(&self) -> x509_cert::spki::SubjectPublicKeyInfoOwned {
+        match self {
+            #[cfg(feature = "rsa")]
+            PublicKey::Rsa(public) => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone()).unwrap()
+            }
+            #[cfg(feature = "p256")]
+            PublicKey::EcdsaP256(verifying_key) => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+            }
+            #[cfg(feature = "p384")]
+            PublicKey::EcdsaP384(verifying_key) => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+            }
+            #[cfg(feature = "p521")]
+            PublicKey::EcdsaP521(public_key) => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*public_key).unwrap()
+            }
+            #[cfg(feature = "ed25519")]
+            PublicKey::Ed25519(verifying_key) => {
+                let pk_bytes = verifying_key.to_bytes();
+                x509_cert::spki::SubjectPublicKeyInfoOwned {
+                    algorithm: x509_cert::spki::AlgorithmIdentifierOwned {
+                        oid: const_oid::ObjectIdentifier::new_unwrap("1.3.101.112"),
+                        parameters: None,
+                    },
+                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes).unwrap(),
+                }
+            }
+        }
+    }
+
     /// Creates a public key from DER-encoded data.
     ///
     /// Attempts to decode DER-encoded public key data. Currently supports
