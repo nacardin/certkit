@@ -715,20 +715,20 @@ impl KeyPair {
             KeyPair::EcdsaP256 { signing_key, .. } => {
                 let signature: p256::ecdsa::Signature =
                     p256::ecdsa::signature::Signer::sign(signing_key, data);
-                Ok(signature.to_vec())
+                Ok(signature.to_der().as_bytes().to_vec())
             }
             #[cfg(feature = "p384")]
             KeyPair::EcdsaP384 { signing_key, .. } => {
                 let signature: p384::ecdsa::Signature =
                     p384::ecdsa::signature::Signer::sign(signing_key, data);
-                Ok(signature.to_vec())
+                Ok(signature.to_der().as_bytes().to_vec())
             }
             #[cfg(feature = "p521")]
             KeyPair::EcdsaP521 { secret_key, .. } => {
                 let signing_key = p521_signing_key(secret_key);
                 let signature: p521::ecdsa::Signature =
                     p521::ecdsa::signature::Signer::sign(&signing_key, data);
-                Ok(signature.to_vec())
+                Ok(signature.to_der().as_bytes().to_vec())
             }
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key } => {

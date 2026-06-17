@@ -198,6 +198,8 @@ impl TbsCertificate {
                 SignatureAlgorithm::Sha256WithRSA
             }
             const_oid::db::rfc5912::ECDSA_WITH_SHA_256 => SignatureAlgorithm::Sha256WithECDSA,
+            const_oid::db::rfc5912::ECDSA_WITH_SHA_384 => SignatureAlgorithm::Sha384WithECDSA,
+            const_oid::db::rfc5912::ECDSA_WITH_SHA_512 => SignatureAlgorithm::Sha512WithECDSA,
             const_oid::db::rfc8410::ID_ED_25519 => SignatureAlgorithm::Sha256WithEdDSA,
             _ => {
                 return Err(CertKitError::DecodingError(

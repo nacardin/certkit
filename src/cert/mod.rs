@@ -257,7 +257,6 @@ impl Certificate {
     /// # Ok(())
     /// # }
     /// ```
-    /// ```
     pub fn to_der(&self) -> Result<Vec<u8>> {
         self.inner
             .to_der()

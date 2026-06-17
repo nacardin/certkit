@@ -39,8 +39,3 @@ sha2 = { version = "0.10", default-features = false, features = ["oid"] }
 thiserror = "2"
 time = "0.3"
 x509-cert = "0.2"
-
-[dev-dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
-regex = "1.7"
-botan = { version = "0.13", default-features = false, features = ["vendored"] }

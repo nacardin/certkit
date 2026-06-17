@@ -18,8 +18,10 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install botan CLI
+        run: sudo apt-get update && sudo apt-get install -y botan
       - name: Test
-        run: cargo test --all-features
+        run: cargo test --workspace --all-features
 
   feature-gate:
     name: Feature Gate Check

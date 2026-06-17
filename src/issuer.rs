@@ -217,9 +217,9 @@ pub trait Issuer {
             #[cfg(feature = "p256")]
             KeyPair::EcdsaP256 { .. } => SignatureAlgorithm::Sha256WithECDSA,
             #[cfg(feature = "p384")]
-            KeyPair::EcdsaP384 { .. } => SignatureAlgorithm::Sha256WithECDSA,
+            KeyPair::EcdsaP384 { .. } => SignatureAlgorithm::Sha384WithECDSA,
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { .. } => SignatureAlgorithm::Sha256WithECDSA,
+            KeyPair::EcdsaP521 { .. } => SignatureAlgorithm::Sha512WithECDSA,
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { .. } => SignatureAlgorithm::Sha256WithEdDSA,
         };
