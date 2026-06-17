@@ -5,8 +5,6 @@
 //! tools. Cargo exposes the binary path through `CARGO_BIN_EXE_certkit`, so no
 //! extra dependency is needed to locate it.
 
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

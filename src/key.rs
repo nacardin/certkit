@@ -1158,7 +1158,6 @@ mod test {
 
     #[test]
     #[cfg(feature = "ed25519")]
-    #[allow(unreachable_patterns)] //Depending on feature combination we may only support ED25519
     fn pem_encode_decode_ed25519() {
         let ed = KeyPair::generate_ed25519();
         let ed_der = ed25519_dalek::pkcs8::EncodePrivateKey::to_pkcs8_der(match &ed {
