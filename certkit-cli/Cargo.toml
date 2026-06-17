@@ -22,6 +22,8 @@ clap = { version = "4", features = ["derive"] }
 time = "0.3"
 x509-cert = "0.2.5"
 der = "0.7"
+rsa = "0.9"
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

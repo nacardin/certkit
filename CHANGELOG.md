@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `certkit-cli`: an `inspect` subcommand that parses a certificate (PEM or DER,
+  or stdin via `-`) and prints its subject, issuer, serial, validity, public
+  key, signature algorithm, and decoded extensions. Supports `--fingerprint`
+  (SHA-256 of the DER) and `--json` for machine-readable output.
+
 ## [0.1.2]
 
 ### Added

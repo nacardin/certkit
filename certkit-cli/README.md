@@ -41,6 +41,15 @@ certkit issue \
   --key-out server.key.pem --out server.cert.pem
 ```
 
+Inspect a certificate (PEM or DER, auto-detected; reads stdin with `-`):
+
+```sh
+certkit inspect cert.pem
+certkit inspect cert.pem --fingerprint        # add the SHA-256 fingerprint
+certkit inspect cert.der --json               # machine-readable output
+cat cert.pem | certkit inspect -
+```
+
 Run `certkit <command> --help` for the full set of options.
 
 ## Algorithms

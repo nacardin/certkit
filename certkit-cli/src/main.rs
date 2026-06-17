@@ -1,22 +1,26 @@
 //! Command-line interface for [`certkit`].
 //!
-//! Provides three subcommands:
+//! Provides four subcommands:
 //! - `generate-key` — generate a private key and emit it as PKCS#8 PEM.
 //! - `self-signed` — create a self-signed certificate (optionally a CA).
 //! - `issue` — issue a certificate signed by an existing CA certificate/key.
+//! - `inspect` — parse a certificate and print its fields.
 //!
 //! Certificate data is written to `--out` (or stdout); a freshly generated
 //! private key is written to `--key-out` (or stdout). Informational messages go
 //! to stderr so stdout stays clean for piping.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::{fs, process};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use der::{Decode, DecodePem};
+use der::{Decode, DecodePem, Encode};
+use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime};
 use x509_cert::Certificate as X509Certificate;
+use x509_cert::ext::pkix;
+use x509_cert::ext::pkix::name::GeneralName;
 
 use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName};
 use certkit::cert::params::{
@@ -47,6 +51,8 @@ enum Command {
     SelfSigned(SelfSignedArgs),
     /// Issue a certificate signed by an existing CA.
     Issue(IssueArgs),
+    /// Parse a certificate and print its fields.
+    Inspect(InspectArgs),
 }
 
 /// Cryptographic algorithm for a generated key.
@@ -192,6 +198,18 @@ struct IssueArgs {
     ca_key: PathBuf,
 }
 
+#[derive(Args)]
+struct InspectArgs {
+    /// Certificate to read (PEM or DER, auto-detected). Omit or `-` for stdin.
+    input: Option<PathBuf>,
+    /// Also print the SHA-256 fingerprint of the DER encoding.
+    #[arg(long)]
+    fingerprint: bool,
+    /// Emit machine-readable JSON instead of text.
+    #[arg(long)]
+    json: bool,
+}
+
 fn main() {
     let cli = Cli::parse();
     if let Err(err) = run(cli) {
@@ -205,6 +223,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::GenerateKey(args) => generate_key(args),
         Command::SelfSigned(args) => self_signed(args),
         Command::Issue(args) => issue(args),
+        Command::Inspect(args) => inspect(args),
     }
 }
 
@@ -271,6 +290,392 @@ fn issue(args: IssueArgs) -> Result<()> {
     )
 }
 
+fn inspect(args: InspectArgs) -> Result<()> {
+    let bytes = read_cert_input(&args.input)?;
+    let cert = parse_x509(&bytes)?;
+    let report = CertReport::from_cert(&cert, args.fingerprint)?;
+
+    let out = if args.json {
+        report.to_json()
+    } else {
+        report.to_text()
+    };
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(out.as_bytes())?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Reads certificate bytes from a file, or from stdin when the path is absent or `-`.
+fn read_cert_input(path: &Option<PathBuf>) -> Result<Vec<u8>> {
+    match path.as_deref().filter(|p| p.as_os_str() != "-") {
+        Some(path) => Ok(fs::read(path)?),
+        None => {
+            let mut buf = Vec::new();
+            std::io::stdin().lock().read_to_end(&mut buf)?;
+            Ok(buf)
+        }
+    }
+}
+
+/// A decoded extension, ready to render in either output format.
+struct ExtReport {
+    oid: String,
+    name: &'static str,
+    critical: bool,
+    summary: String,
+}
+
+/// The fields of a certificate that `inspect` reports.
+struct CertReport {
+    subject: String,
+    issuer: String,
+    serial: String,
+    not_before: String,
+    not_after: String,
+    expired: bool,
+    not_yet_valid: bool,
+    days_remaining: i64,
+    public_key: String,
+    signature_algorithm: String,
+    fingerprint_sha256: Option<String>,
+    extensions: Vec<ExtReport>,
+}
+
+impl CertReport {
+    fn from_cert(cert: &X509Certificate, want_fingerprint: bool) -> Result<Self> {
+        let tbs = &cert.tbs_certificate;
+
+        let not_before = tbs.validity.not_before.to_unix_duration().as_secs() as i64;
+        let not_after = tbs.validity.not_after.to_unix_duration().as_secs() as i64;
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+
+        let fingerprint_sha256 = want_fingerprint
+            .then(|| cert.to_der().map(|der| hex_colons(&Sha256::digest(der))))
+            .transpose()?;
+
+        let extensions = tbs
+            .extensions
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(describe_extension)
+            .collect();
+
+        Ok(Self {
+            subject: tbs.subject.to_string(),
+            issuer: tbs.issuer.to_string(),
+            serial: hex_colons(tbs.serial_number.as_bytes()),
+            not_before: tbs.validity.not_before.to_string(),
+            not_after: tbs.validity.not_after.to_string(),
+            expired: not_after < now,
+            not_yet_valid: not_before > now,
+            days_remaining: (not_after - now).div_euclid(86_400),
+            public_key: describe_public_key(&tbs.subject_public_key_info),
+            signature_algorithm: describe_oid(&cert.signature_algorithm.oid.to_string()),
+            fingerprint_sha256,
+            extensions,
+        })
+    }
+
+    fn validity_note(&self) -> String {
+        if self.expired {
+            "(expired)".to_string()
+        } else if self.not_yet_valid {
+            "(not yet valid)".to_string()
+        } else {
+            format!("(expires in {} days)", self.days_remaining)
+        }
+    }
+
+    fn to_text(&self) -> String {
+        let mut out = String::new();
+        let mut field = |label: &str, value: &str| {
+            out.push_str(&format!("{label:<22}{value}\n"));
+        };
+        field("Subject:", &self.subject);
+        field("Issuer:", &self.issuer);
+        field("Serial:", &self.serial);
+        field("Not Before:", &self.not_before);
+        field(
+            "Not After:",
+            &format!("{} {}", self.not_after, self.validity_note()),
+        );
+        field("Public Key:", &self.public_key);
+        field("Signature Algorithm:", &self.signature_algorithm);
+        if let Some(fp) = &self.fingerprint_sha256 {
+            field("SHA-256 Fingerprint:", fp);
+        }
+
+        if self.extensions.is_empty() {
+            out.push_str("Extensions:           (none)\n");
+        } else {
+            out.push_str("Extensions:\n");
+            for ext in &self.extensions {
+                let label = if ext.name.is_empty() {
+                    ext.oid.clone()
+                } else {
+                    ext.name.to_string()
+                };
+                let crit = if ext.critical { " (critical)" } else { "" };
+                out.push_str(&format!("  {label}{crit}: {}\n", ext.summary));
+            }
+        }
+        out
+    }
+
+    fn to_json(&self) -> String {
+        let fingerprint = match &self.fingerprint_sha256 {
+            Some(fp) => json_string(fp),
+            None => "null".to_string(),
+        };
+        let extensions: Vec<String> = self
+            .extensions
+            .iter()
+            .map(|ext| {
+                format!(
+                    "{{\"oid\":{},\"name\":{},\"critical\":{},\"summary\":{}}}",
+                    json_string(&ext.oid),
+                    json_string(ext.name),
+                    ext.critical,
+                    json_string(&ext.summary),
+                )
+            })
+            .collect();
+
+        format!(
+            concat!(
+                "{{\"subject\":{},\"issuer\":{},\"serial\":{},",
+                "\"not_before\":{},\"not_after\":{},\"expired\":{},",
+                "\"not_yet_valid\":{},\"days_remaining\":{},\"public_key\":{},",
+                "\"signature_algorithm\":{},\"fingerprint_sha256\":{},",
+                "\"extensions\":[{}]}}\n"
+            ),
+            json_string(&self.subject),
+            json_string(&self.issuer),
+            json_string(&self.serial),
+            json_string(&self.not_before),
+            json_string(&self.not_after),
+            self.expired,
+            self.not_yet_valid,
+            self.days_remaining,
+            json_string(&self.public_key),
+            json_string(&self.signature_algorithm),
+            fingerprint,
+            extensions.join(","),
+        )
+    }
+}
+
+/// Names the subject's public key algorithm (and size, for RSA).
+fn describe_public_key(spki: &x509_cert::spki::SubjectPublicKeyInfoOwned) -> String {
+    match PublicKey::from_x509spki(spki) {
+        Ok(PublicKey::Rsa(key)) => {
+            use rsa::traits::PublicKeyParts;
+            format!("RSA ({} bit)", key.n().bits())
+        }
+        Ok(PublicKey::EcdsaP256(_)) => "ECDSA (P-256)".to_string(),
+        Ok(PublicKey::EcdsaP384(_)) => "ECDSA (P-384)".to_string(),
+        Ok(PublicKey::EcdsaP521(_)) => "ECDSA (P-521)".to_string(),
+        Ok(PublicKey::Ed25519(_)) => "Ed25519".to_string(),
+        Err(_) => format!("unrecognized (OID {})", spki.algorithm.oid),
+    }
+}
+
+/// Decodes a single extension into a renderable summary.
+fn describe_extension(ext: &x509_cert::ext::Extension) -> ExtReport {
+    let value = ext.extn_value.as_bytes();
+    let (name, summary) = match ext.extn_id.to_string().as_str() {
+        "2.5.29.19" => ("Basic Constraints", basic_constraints_summary(value)),
+        "2.5.29.15" => ("Key Usage", key_usage_summary(value)),
+        "2.5.29.37" => ("Extended Key Usage", extended_key_usage_summary(value)),
+        "2.5.29.17" => ("Subject Alternative Name", san_summary(value)),
+        "2.5.29.14" => ("Subject Key Identifier", ski_summary(value)),
+        "2.5.29.35" => ("Authority Key Identifier", aki_summary(value)),
+        _ => ("", format!("{} bytes", value.len())),
+    };
+    ExtReport {
+        oid: ext.extn_id.to_string(),
+        name,
+        critical: ext.critical,
+        summary,
+    }
+}
+
+fn basic_constraints_summary(value: &[u8]) -> String {
+    match pkix::BasicConstraints::from_der(value) {
+        Ok(bc) => match bc.path_len_constraint {
+            Some(len) => format!("CA={}, pathLen={len}", bc.ca),
+            None => format!("CA={}", bc.ca),
+        },
+        Err(_) => UNDECODABLE.to_string(),
+    }
+}
+
+fn key_usage_summary(value: &[u8]) -> String {
+    match pkix::KeyUsage::from_der(value) {
+        Ok(ku) => {
+            let names: Vec<&str> = ku.0.into_iter().map(key_usage_name).collect();
+            join_or_none(&names)
+        }
+        Err(_) => UNDECODABLE.to_string(),
+    }
+}
+
+fn extended_key_usage_summary(value: &[u8]) -> String {
+    match pkix::ExtendedKeyUsage::from_der(value) {
+        Ok(eku) => {
+            let names: Vec<String> = eku
+                .0
+                .iter()
+                .map(|oid| describe_oid(&oid.to_string()))
+                .collect();
+            join_or_none(&names)
+        }
+        Err(_) => UNDECODABLE.to_string(),
+    }
+}
+
+fn san_summary(value: &[u8]) -> String {
+    match pkix::SubjectAltName::from_der(value) {
+        Ok(san) => {
+            let names: Vec<String> = san.0.iter().map(general_name).collect();
+            join_or_none(&names)
+        }
+        Err(_) => UNDECODABLE.to_string(),
+    }
+}
+
+fn ski_summary(value: &[u8]) -> String {
+    match pkix::SubjectKeyIdentifier::from_der(value) {
+        Ok(ski) => hex_colons(ski.0.as_bytes()),
+        Err(_) => UNDECODABLE.to_string(),
+    }
+}
+
+fn aki_summary(value: &[u8]) -> String {
+    match pkix::AuthorityKeyIdentifier::from_der(value) {
+        Ok(aki) => match aki.key_identifier {
+            Some(id) => format!("keyid:{}", hex_colons(id.as_bytes())),
+            None => "(no key identifier)".to_string(),
+        },
+        Err(_) => UNDECODABLE.to_string(),
+    }
+}
+
+/// Renders a `GeneralName` for the SAN summary.
+fn general_name(name: &GeneralName) -> String {
+    match name {
+        GeneralName::DnsName(s) => format!("DNS:{s}"),
+        GeneralName::Rfc822Name(s) => format!("email:{s}"),
+        GeneralName::UniformResourceIdentifier(s) => format!("URI:{s}"),
+        GeneralName::IpAddress(octets) => format!("IP:{}", format_ip(octets.as_bytes())),
+        GeneralName::DirectoryName(name) => format!("dirName:{name}"),
+        GeneralName::RegisteredId(oid) => format!("registeredID:{oid}"),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Formats raw IP-address octets: dotted-quad for v4, colon-hex for v6.
+fn format_ip(octets: &[u8]) -> String {
+    match octets.len() {
+        4 => octets
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join("."),
+        16 => octets
+            .chunks(2)
+            .map(|pair| format!("{:02x}{:02x}", pair[0], pair[1]))
+            .collect::<Vec<_>>()
+            .join(":"),
+        _ => hex_colons(octets),
+    }
+}
+
+fn key_usage_name(usage: pkix::KeyUsages) -> &'static str {
+    use pkix::KeyUsages;
+    match usage {
+        KeyUsages::DigitalSignature => "digitalSignature",
+        KeyUsages::NonRepudiation => "nonRepudiation",
+        KeyUsages::KeyEncipherment => "keyEncipherment",
+        KeyUsages::DataEncipherment => "dataEncipherment",
+        KeyUsages::KeyAgreement => "keyAgreement",
+        KeyUsages::KeyCertSign => "keyCertSign",
+        KeyUsages::CRLSign => "cRLSign",
+        KeyUsages::EncipherOnly => "encipherOnly",
+        KeyUsages::DecipherOnly => "decipherOnly",
+    }
+}
+
+/// Maps a dotted OID string to a friendly name, falling back to the OID itself.
+fn describe_oid(oid: &str) -> String {
+    let name = match oid {
+        // Extended Key Usage purposes.
+        "1.3.6.1.5.5.7.3.1" => "serverAuth",
+        "1.3.6.1.5.5.7.3.2" => "clientAuth",
+        "1.3.6.1.5.5.7.3.3" => "codeSigning",
+        "1.3.6.1.5.5.7.3.4" => "emailProtection",
+        "1.3.6.1.5.5.7.3.8" => "timeStamping",
+        "1.3.6.1.5.5.7.3.9" => "OCSPSigning",
+        // Signature algorithms.
+        "1.2.840.10045.4.1" => "ecdsa-with-SHA1",
+        "1.2.840.10045.4.3.2" => "ecdsa-with-SHA256",
+        "1.2.840.10045.4.3.3" => "ecdsa-with-SHA384",
+        "1.2.840.10045.4.3.4" => "ecdsa-with-SHA512",
+        "1.2.840.113549.1.1.5" => "sha1WithRSAEncryption",
+        "1.2.840.113549.1.1.11" => "sha256WithRSAEncryption",
+        "1.2.840.113549.1.1.12" => "sha384WithRSAEncryption",
+        "1.2.840.113549.1.1.13" => "sha512WithRSAEncryption",
+        "1.3.101.112" => "Ed25519",
+        other => return other.to_string(),
+    };
+    name.to_string()
+}
+
+/// Joins parts with commas, or reports `(none)` when empty.
+fn join_or_none<S: AsRef<str>>(parts: &[S]) -> String {
+    if parts.is_empty() {
+        "(none)".to_string()
+    } else {
+        parts
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// Lowercase hex with colon separators, e.g. `9f:86:d0`.
+fn hex_colons(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+/// Encodes a string as a JSON string literal (quotes + minimal escaping).
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+const UNDECODABLE: &str = "(undecodable)";
+
 /// Generates a key pair for the requested algorithm.
 fn generate(algorithm: Algorithm, rsa_bits: usize) -> Result<KeyPair> {
     Ok(match algorithm {
@@ -327,13 +732,18 @@ fn cert_info(dn: &DnArgs, key: &KeyPair, opts: &CertOptArgs) -> CertificationReq
 
 /// Loads a CA certificate from a PEM or DER file (auto-detected).
 fn load_ca_cert(path: &Path) -> Result<Certificate> {
-    let bytes = fs::read(path)?;
-    let inner = if bytes.starts_with(b"-----BEGIN") {
-        X509Certificate::from_pem(&bytes)?
+    Ok(Certificate {
+        inner: parse_x509(&fs::read(path)?)?,
+    })
+}
+
+/// Parses an X.509 certificate from PEM or DER bytes (auto-detected).
+fn parse_x509(bytes: &[u8]) -> Result<X509Certificate> {
+    Ok(if bytes.starts_with(b"-----BEGIN") {
+        X509Certificate::from_pem(bytes)?
     } else {
-        X509Certificate::from_der(&bytes)?
-    };
-    Ok(Certificate { inner })
+        X509Certificate::from_der(bytes)?
+    })
 }
 
 /// Writes the certificate and, when one was generated, the private key.

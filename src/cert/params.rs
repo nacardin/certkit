@@ -62,15 +62,28 @@ impl DistinguishedName {
     /// An `x509_cert::name::DistinguishedName` object.
     pub fn as_x509_name(&self) -> x509_cert::name::DistinguishedName {
         use core::str::FromStr;
-        let rfc4514_name = format!(
-            "CN={},OU={},O={},L={},ST={},C={}",
-            self.common_name,
-            self.organization_unit.clone().unwrap_or_default(),
-            self.organization.clone().unwrap_or_default(),
-            self.locality.clone().unwrap_or_default(),
-            self.state.clone().unwrap_or_default(),
-            self.country.clone().unwrap_or_default()
-        );
+
+        // Build the RDN sequence from only the attributes that are actually set,
+        // so we don't emit empty `OU=`/`O=`/`L=`/`ST=`/`C=` attributes for fields
+        // the caller left unset. Attribute ordering is preserved.
+        let mut rdns = vec![format!("CN={}", self.common_name)];
+
+        let optional_attrs = [
+            ("OU", &self.organization_unit),
+            ("O", &self.organization),
+            ("L", &self.locality),
+            ("ST", &self.state),
+            ("C", &self.country),
+        ];
+
+        for (key, value) in optional_attrs {
+            match value {
+                Some(value) if !value.is_empty() => rdns.push(format!("{key}={value}")),
+                _ => {}
+            }
+        }
+
+        let rfc4514_name = rdns.join(",");
         RdnSequence::from_str(&rfc4514_name).unwrap()
     }
 
@@ -181,5 +194,69 @@ impl ExtensionParam {
     /// A decoded extension object.
     pub fn to_extension<E: ToAndFromX509Extension>(&self) -> Result<E, CertKitError> {
         E::from_x509_extension_value(&self.value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Object identifier for the Common Name (CN) attribute.
+    const CN_OID: &str = "2.5.4.3";
+
+    #[test]
+    fn common_name_only_produces_single_rdn() {
+        let dn = DistinguishedName {
+            common_name: "leaf.example.com".to_string(),
+            ..Default::default()
+        };
+
+        let x509_name = dn.as_x509_name();
+
+        // Exactly one RDN holding exactly one attribute (the CN) — no empty
+        // OU/O/L/ST/C attributes for the fields the caller left unset.
+        assert_eq!(x509_name.0.len(), 1, "expected a single RDN");
+        let attrs: Vec<_> = x509_name.0.iter().flat_map(|rdn| rdn.0.iter()).collect();
+        assert_eq!(attrs.len(), 1, "expected a single attribute");
+        assert_eq!(attrs[0].oid.to_string(), CN_OID);
+        assert_eq!(x509_name.to_string(), "CN=leaf.example.com");
+
+        // And it round-trips back to the original common name with no other fields.
+        let round_tripped = DistinguishedName::from_x509_name(&x509_name);
+        assert_eq!(round_tripped.common_name, "leaf.example.com");
+        assert!(round_tripped.organization_unit.is_none());
+        assert!(round_tripped.organization.is_none());
+        assert!(round_tripped.locality.is_none());
+        assert!(round_tripped.state.is_none());
+        assert!(round_tripped.country.is_none());
+    }
+
+    #[test]
+    fn only_populated_attributes_are_emitted_in_order() {
+        let dn = DistinguishedName {
+            common_name: "leaf.example.com".to_string(),
+            organization: Some("Example Corp".to_string()),
+            country: Some("US".to_string()),
+            ..Default::default()
+        };
+
+        let x509_name = dn.as_x509_name();
+
+        // Two RDNs were skipped (OU, L, ST were unset) leaving CN, O, C in order.
+        assert_eq!(x509_name.to_string(), "CN=leaf.example.com,O=Example Corp,C=US");
+    }
+
+    #[test]
+    fn empty_string_attributes_are_skipped() {
+        let dn = DistinguishedName {
+            common_name: "leaf.example.com".to_string(),
+            organization_unit: Some(String::new()),
+            country: Some("US".to_string()),
+            ..Default::default()
+        };
+
+        // An explicitly empty `OU` is treated the same as `None` and dropped.
+        let x509_name = dn.as_x509_name();
+        assert_eq!(x509_name.to_string(), "CN=leaf.example.com,C=US");
     }
 }
