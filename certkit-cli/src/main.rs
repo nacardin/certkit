@@ -11,28 +11,60 @@
 //! to stderr so stdout stays clean for piping.
 //!
 //! The crate is organized into:
-//! - [`cli`] — argument parsing types (clap derive definitions).
-//! - [`commands`] — one handler per subcommand.
+//! - [`cmd`] — one module per subcommand, each an options struct with an
+//!   `execute` method.
+//! - [`args`] — argument types (value enums and `Args` groups) shared between
+//!   subcommands.
 //! - [`keys`] — generating or loading the subject key pair.
 //! - [`certs`] — assembling and parsing certificates.
 //! - [`io`] — reading input and writing certificates/keys to files or stdout.
 //! - [`report`] — decoding a parsed certificate and rendering it as text or JSON.
 
+mod args;
 mod certs;
-mod cli;
-mod commands;
+mod cmd;
 mod io;
 mod keys;
 mod report;
 
 use std::process;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
-use cli::{Cli, Command};
+use cmd::inspect::InspectOpt;
+use cmd::issue::IssueOpt;
+use cmd::keygen::KeygenOpt;
+use cmd::self_signed::SelfSignedOpt;
 
 /// Error type shared across the CLI; any error is boxed and printed by `main`.
-pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+#[derive(Parser)]
+#[command(
+    name = "certkit",
+    version,
+    about = "Generate keys and X.509 certificates with certkit"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Generate a new private key (PKCS#8 PEM).
+    #[command(name = "keygen")]
+    GenerateKey(KeygenOpt),
+    /// Create a self-signed certificate.
+    #[command(name = "gen_self_signed")]
+    SelfSigned(SelfSignedOpt),
+    /// Issue a certificate signed by an existing CA.
+    #[command(name = "issue")]
+    Issue(IssueOpt),
+    /// Parse a certificate and print its fields.
+    #[command(name = "cert_info")]
+    Inspect(InspectOpt),
+}
 
 fn main() {
     let cli = Cli::parse();
@@ -44,9 +76,9 @@ fn main() {
 
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::GenerateKey(args) => commands::generate_key(args),
-        Command::SelfSigned(args) => commands::self_signed(args),
-        Command::Issue(args) => commands::issue(args),
-        Command::Inspect(args) => commands::inspect(args),
+        Command::GenerateKey(opt) => opt.execute(),
+        Command::SelfSigned(opt) => opt.execute(),
+        Command::Issue(opt) => opt.execute(),
+        Command::Inspect(opt) => opt.execute(),
     }
 }

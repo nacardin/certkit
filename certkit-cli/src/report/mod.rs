@@ -28,7 +28,7 @@ struct ExtReport {
 }
 
 /// The fields of a certificate that `inspect` reports.
-pub(crate) struct CertReport {
+pub struct CertReport {
     subject: String,
     issuer: String,
     serial: String,
@@ -44,7 +44,7 @@ pub(crate) struct CertReport {
 }
 
 impl CertReport {
-    pub(crate) fn from_cert(cert: &X509Certificate, want_fingerprint: bool) -> Result<Self> {
+    pub fn from_cert(cert: &X509Certificate, want_fingerprint: bool) -> Result<Self> {
         let tbs = &cert.tbs_certificate;
 
         let not_before = tbs.validity.not_before.to_unix_duration().as_secs() as i64;
@@ -73,7 +73,7 @@ impl CertReport {
             not_yet_valid: not_before > now,
             days_remaining: (not_after - now).div_euclid(86_400),
             public_key: describe_public_key(&tbs.subject_public_key_info),
-            signature_algorithm: describe_oid(&cert.signature_algorithm.oid.to_string()),
+            signature_algorithm: describe_oid(cert.signature_algorithm.oid),
             fingerprint_sha256,
             extensions,
         })
@@ -89,7 +89,7 @@ impl CertReport {
         }
     }
 
-    pub(crate) fn to_text(&self) -> String {
+    pub fn to_text(&self) -> String {
         let mut out = String::new();
         let mut field = |label: &str, value: &str| {
             out.push_str(&format!("{label:<22}{value}\n"));
@@ -125,7 +125,7 @@ impl CertReport {
         out
     }
 
-    pub(crate) fn to_json(&self) -> String {
+    pub fn to_json(&self) -> String {
         let fingerprint = match &self.fingerprint_sha256 {
             Some(fp) => json_string(fp),
             None => "null".to_string(),

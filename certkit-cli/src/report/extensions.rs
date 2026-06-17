@@ -6,6 +6,7 @@
 //! [`UNDECODABLE`](super::fmt) when decoding fails).
 
 use der::Decode;
+use der::oid::AssociatedOid;
 use x509_cert::ext::pkix;
 use x509_cert::ext::pkix::name::GeneralName;
 
@@ -13,19 +14,31 @@ use super::ExtReport;
 use super::fmt::{UNDECODABLE, describe_oid, format_ip, hex_colons, join_or_none};
 
 /// Decodes a single extension into a renderable summary.
+///
+/// Each arm matches the extension's OID against the [`AssociatedOid::OID`] of
+/// the very type used to decode it, so the OID and its decoder can never drift
+/// apart. `ObjectIdentifier` isn't usable in `match` patterns, hence the
+/// `if`/`else if` chain.
 pub(super) fn describe_extension(ext: &x509_cert::ext::Extension) -> ExtReport {
     let value = ext.extn_value.as_bytes();
-    let (name, summary) = match ext.extn_id.to_string().as_str() {
-        "2.5.29.19" => ("Basic Constraints", basic_constraints_summary(value)),
-        "2.5.29.15" => ("Key Usage", key_usage_summary(value)),
-        "2.5.29.37" => ("Extended Key Usage", extended_key_usage_summary(value)),
-        "2.5.29.17" => ("Subject Alternative Name", san_summary(value)),
-        "2.5.29.14" => ("Subject Key Identifier", ski_summary(value)),
-        "2.5.29.35" => ("Authority Key Identifier", aki_summary(value)),
-        _ => ("", format!("{} bytes", value.len())),
+    let oid = ext.extn_id;
+    let (name, summary) = if oid == pkix::BasicConstraints::OID {
+        ("Basic Constraints", basic_constraints_summary(value))
+    } else if oid == pkix::KeyUsage::OID {
+        ("Key Usage", key_usage_summary(value))
+    } else if oid == pkix::ExtendedKeyUsage::OID {
+        ("Extended Key Usage", extended_key_usage_summary(value))
+    } else if oid == pkix::SubjectAltName::OID {
+        ("Subject Alternative Name", san_summary(value))
+    } else if oid == pkix::SubjectKeyIdentifier::OID {
+        ("Subject Key Identifier", ski_summary(value))
+    } else if oid == pkix::AuthorityKeyIdentifier::OID {
+        ("Authority Key Identifier", aki_summary(value))
+    } else {
+        ("", format!("{} bytes", value.len()))
     };
     ExtReport {
-        oid: ext.extn_id.to_string(),
+        oid: oid.to_string(),
         name,
         critical: ext.critical,
         summary,
@@ -55,11 +68,7 @@ fn key_usage_summary(value: &[u8]) -> String {
 fn extended_key_usage_summary(value: &[u8]) -> String {
     match pkix::ExtendedKeyUsage::from_der(value) {
         Ok(eku) => {
-            let names: Vec<String> = eku
-                .0
-                .iter()
-                .map(|oid| describe_oid(&oid.to_string()))
-                .collect();
+            let names: Vec<String> = eku.0.iter().map(|oid| describe_oid(*oid)).collect();
             join_or_none(&names)
         }
         Err(_) => UNDECODABLE.to_string(),

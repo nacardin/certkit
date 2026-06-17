@@ -3,6 +3,9 @@
 //! These turn raw bytes, OIDs, and strings into the human- and JSON-friendly
 //! fragments that [`super`] and [`super::extensions`] assemble into output.
 
+use const_oid::ObjectIdentifier;
+use const_oid::db::{rfc5280, rfc5912, rfc8410};
+
 /// Placeholder shown when an extension's value cannot be DER-decoded.
 pub(super) const UNDECODABLE: &str = "(undecodable)";
 
@@ -33,26 +36,51 @@ pub(super) fn format_ip(octets: &[u8]) -> String {
 }
 
 /// Maps a dotted OID string to a friendly name, falling back to the OID itself.
-pub(super) fn describe_oid(oid: &str) -> String {
-    let name = match oid {
-        // Extended Key Usage purposes.
-        "1.3.6.1.5.5.7.3.1" => "serverAuth",
-        "1.3.6.1.5.5.7.3.2" => "clientAuth",
-        "1.3.6.1.5.5.7.3.3" => "codeSigning",
-        "1.3.6.1.5.5.7.3.4" => "emailProtection",
-        "1.3.6.1.5.5.7.3.8" => "timeStamping",
-        "1.3.6.1.5.5.7.3.9" => "OCSPSigning",
-        // Signature algorithms.
-        "1.2.840.10045.4.1" => "ecdsa-with-SHA1",
-        "1.2.840.10045.4.3.2" => "ecdsa-with-SHA256",
-        "1.2.840.10045.4.3.3" => "ecdsa-with-SHA384",
-        "1.2.840.10045.4.3.4" => "ecdsa-with-SHA512",
-        "1.2.840.113549.1.1.5" => "sha1WithRSAEncryption",
-        "1.2.840.113549.1.1.11" => "sha256WithRSAEncryption",
-        "1.2.840.113549.1.1.12" => "sha384WithRSAEncryption",
-        "1.2.840.113549.1.1.13" => "sha512WithRSAEncryption",
-        "1.3.101.112" => "Ed25519",
-        other => return other.to_string(),
+/// `ecdsa-with-SHA1` (legacy), which const-oid's database doesn't carry — its
+/// ECDSA signature series starts at SHA-224.
+const ECDSA_WITH_SHA1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.1");
+
+/// Maps an OID to a friendly name.
+///
+/// Known Extended Key Usage purposes and signature algorithms get a curated
+/// short name; the OID identity comes from const-oid's named constants rather
+/// than dotted-string literals. For anything else, we fall back to const-oid's
+/// name database (e.g. `id-ecPublicKey`), and finally to the bare OID.
+pub(super) fn describe_oid(oid: ObjectIdentifier) -> String {
+    let name = if oid == rfc5280::ID_KP_SERVER_AUTH {
+        "serverAuth"
+    } else if oid == rfc5280::ID_KP_CLIENT_AUTH {
+        "clientAuth"
+    } else if oid == rfc5280::ID_KP_CODE_SIGNING {
+        "codeSigning"
+    } else if oid == rfc5280::ID_KP_EMAIL_PROTECTION {
+        "emailProtection"
+    } else if oid == rfc5280::ID_KP_TIME_STAMPING {
+        "timeStamping"
+    } else if oid == rfc5280::ID_KP_OCSP_SIGNING {
+        "OCSPSigning"
+    } else if oid == ECDSA_WITH_SHA1 {
+        "ecdsa-with-SHA1"
+    } else if oid == rfc5912::ECDSA_WITH_SHA_256 {
+        "ecdsa-with-SHA256"
+    } else if oid == rfc5912::ECDSA_WITH_SHA_384 {
+        "ecdsa-with-SHA384"
+    } else if oid == rfc5912::ECDSA_WITH_SHA_512 {
+        "ecdsa-with-SHA512"
+    } else if oid == rfc5912::SHA_1_WITH_RSA_ENCRYPTION {
+        "sha1WithRSAEncryption"
+    } else if oid == rfc5912::SHA_256_WITH_RSA_ENCRYPTION {
+        "sha256WithRSAEncryption"
+    } else if oid == rfc5912::SHA_384_WITH_RSA_ENCRYPTION {
+        "sha384WithRSAEncryption"
+    } else if oid == rfc5912::SHA_512_WITH_RSA_ENCRYPTION {
+        "sha512WithRSAEncryption"
+    } else if oid == rfc8410::ID_ED_25519 {
+        "Ed25519"
+    } else {
+        return const_oid::db::DB
+            .by_oid(&oid)
+            .map_or_else(|| oid.to_string(), str::to_string);
     };
     name.to_string()
 }

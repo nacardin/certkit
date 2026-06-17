@@ -13,10 +13,10 @@ use certkit::cert::Certificate;
 use certkit::key::KeyPair;
 
 use crate::Result;
-use crate::cli::{CertFormat, CertOptArgs};
+use crate::args::{CertFormat, CertOptArgs};
 
 /// Reads certificate bytes from a file, or from stdin when the path is absent or `-`.
-pub(crate) fn read_cert_input(path: &Option<PathBuf>) -> Result<Vec<u8>> {
+pub fn read_cert_input(path: &Option<PathBuf>) -> Result<Vec<u8>> {
     match path.as_deref().filter(|p| p.as_os_str() != "-") {
         Some(path) => Ok(fs::read(path)?),
         None => {
@@ -28,7 +28,7 @@ pub(crate) fn read_cert_input(path: &Option<PathBuf>) -> Result<Vec<u8>> {
 }
 
 /// Writes the certificate and, when one was generated, the private key.
-pub(crate) fn emit(
+pub fn emit(
     cert: &Certificate,
     key: Option<&KeyPair>,
     key_out: &Option<PathBuf>,
@@ -54,7 +54,7 @@ pub(crate) fn emit(
 }
 
 /// Refuses to interleave a binary DER certificate and a PEM key on stdout.
-pub(crate) fn guard_stdout_clash(
+pub fn guard_stdout_clash(
     generated: bool,
     key_out: &Option<PathBuf>,
     cert_out: &Option<PathBuf>,
@@ -67,7 +67,7 @@ pub(crate) fn guard_stdout_clash(
 }
 
 /// Writes bytes to a file when a path is given, otherwise to stdout.
-pub(crate) fn write_bytes(out: &Option<PathBuf>, bytes: &[u8]) -> Result<()> {
+pub fn write_bytes(out: &Option<PathBuf>, bytes: &[u8]) -> Result<()> {
     match out {
         Some(path) => fs::write(path, bytes)?,
         None => {

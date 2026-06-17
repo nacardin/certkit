@@ -20,10 +20,10 @@ use certkit::cert::params::{CertificationRequestInfo, DistinguishedName, Extensi
 use certkit::key::{KeyPair, PublicKey};
 
 use crate::Result;
-use crate::cli::{CertOptArgs, DnArgs};
+use crate::args::{CertOptArgs, DnArgs};
 
 /// Builds the certification request info from the DN, key, and options.
-pub(crate) fn cert_info(
+pub fn cert_info(
     dn: &DnArgs,
     key: &KeyPair,
     opts: &CertOptArgs,
@@ -84,14 +84,14 @@ fn build_san(dns: &[String], email: &[String]) -> Result<Option<ExtensionParam>>
 }
 
 /// Loads a CA certificate from a PEM or DER file (auto-detected).
-pub(crate) fn load_ca_cert(path: &Path) -> Result<Certificate> {
+pub fn load_ca_cert(path: &Path) -> Result<Certificate> {
     Ok(Certificate {
         inner: parse_x509(&fs::read(path)?)?,
     })
 }
 
 /// Parses an X.509 certificate from PEM or DER bytes (auto-detected).
-pub(crate) fn parse_x509(bytes: &[u8]) -> Result<X509Certificate> {
+pub fn parse_x509(bytes: &[u8]) -> Result<X509Certificate> {
     Ok(if bytes.starts_with(b"-----BEGIN") {
         X509Certificate::from_pem(bytes)?
     } else {

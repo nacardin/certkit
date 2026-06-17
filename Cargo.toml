@@ -39,3 +39,8 @@ sha2 = { version = "0.10", default-features = false, features = ["oid"] }
 thiserror = "2"
 time = "0.3"
 x509-cert = "0.2"
+
+[dev-dependencies]
+rustls = "0.23"
+rustls-pemfile = "2"
+rustls-pki-types = "1"

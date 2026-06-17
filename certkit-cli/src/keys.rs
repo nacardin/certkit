@@ -8,14 +8,14 @@ use std::fs;
 use certkit::key::KeyPair;
 
 use crate::Result;
-use crate::cli::{Algorithm, Curve, KeyParams, KeySourceArgs};
+use crate::args::{Algorithm, Curve, KeyParams, KeySourceArgs};
 
 /// Generates a key pair for the requested algorithm and `--params`.
 ///
 /// `--params` is parsed (and curve names normalized) when the arguments are
 /// read, so here it only remains to reject a parameter that doesn't match the
 /// chosen algorithm — e.g. a curve for RSA, or a key size for ECDSA.
-pub(crate) fn generate(algorithm: Algorithm, params: Option<KeyParams>) -> Result<KeyPair> {
+pub fn generate(algorithm: Algorithm, params: Option<KeyParams>) -> Result<KeyPair> {
     match algorithm {
         Algorithm::Rsa => {
             let bits = match params {
@@ -48,7 +48,7 @@ pub(crate) fn generate(algorithm: Algorithm, params: Option<KeyParams>) -> Resul
 }
 
 /// Loads the key from `--key`, or generates one. Returns `(key, generated)`.
-pub(crate) fn key_pair(args: &KeySourceArgs) -> Result<(KeyPair, bool)> {
+pub fn key_pair(args: &KeySourceArgs) -> Result<(KeyPair, bool)> {
     match &args.key {
         Some(path) => Ok((
             KeyPair::import_from_pkcs8_pem(&fs::read_to_string(path)?)?,

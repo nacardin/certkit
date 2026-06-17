@@ -1,49 +1,24 @@
-//! Command-line argument definitions.
+//! Shared command-line argument types.
 //!
-//! These are the clap derive types: the top-level [`Cli`]/[`Command`], the
-//! value enums describing algorithms and output formats, and the `Args` groups
-//! shared between the certificate-issuing subcommands. Fields are `pub(crate)`
-//! so the [`commands`](crate::commands) handlers and their helpers can read them.
+//! These are the clap derive pieces reused across subcommands: the value enums
+//! describing algorithms and output formats, and the `Args` groups
+//! ([`DnArgs`], [`KeySourceArgs`], [`CertOptArgs`]) flattened into the
+//! certificate subcommands. Each subcommand's own options struct lives with its
+//! handler under [`cmd`](crate::cmd). Fields are `pub` so those handlers
+//! and their helpers can read them.
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, ValueEnum};
 
 use certkit::cert::extensions::ExtendedKeyUsageOption;
-
-#[derive(Parser)]
-#[command(
-    name = "certkit",
-    version,
-    about = "Generate keys and X.509 certificates with certkit"
-)]
-pub(crate) struct Cli {
-    #[command(subcommand)]
-    pub(crate) command: Command,
-}
-
-#[derive(Subcommand)]
-pub(crate) enum Command {
-    /// Generate a new private key (PKCS#8 PEM).
-    #[command(name = "keygen")]
-    GenerateKey(GenerateKeyArgs),
-    /// Create a self-signed certificate.
-    #[command(name = "gen_self_signed")]
-    SelfSigned(SelfSignedArgs),
-    /// Issue a certificate signed by an existing CA.
-    #[command(name = "issue")]
-    Issue(IssueArgs),
-    /// Parse a certificate and print its fields.
-    #[command(name = "cert_info")]
-    Inspect(InspectArgs),
-}
 
 /// Key algorithm, named as Botan's `keygen --algo` expects.
 ///
 /// The key shape (RSA size, ECDSA curve) is selected with `--params`, also
 /// following Botan: `--params 2048` for RSA, `--params secp256r1` for ECDSA.
 #[derive(Copy, Clone, Debug, ValueEnum)]
-pub(crate) enum Algorithm {
+pub enum Algorithm {
     #[value(name = "RSA")]
     Rsa,
     #[value(name = "ECDSA")]
@@ -55,7 +30,7 @@ pub(crate) enum Algorithm {
 /// Key parameters chosen with `--params`, disambiguated by value: a bare number
 /// is an RSA key size, anything else is an ECDSA curve name (as in Botan).
 #[derive(Copy, Clone, Debug)]
-pub(crate) enum KeyParams {
+pub enum KeyParams {
     /// RSA modulus size in bits.
     Bits(u32),
     /// ECDSA curve.
@@ -64,7 +39,7 @@ pub(crate) enum KeyParams {
 
 /// A NIST/SECG curve certkit can generate.
 #[derive(Copy, Clone, Debug)]
-pub(crate) enum Curve {
+pub enum Curve {
     P256,
     P384,
     P521,
@@ -94,14 +69,14 @@ impl std::str::FromStr for KeyParams {
 
 /// Output encoding for certificates.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-pub(crate) enum CertFormat {
+pub enum CertFormat {
     Pem,
     Der,
 }
 
 /// Extended Key Usage purposes that can be requested for a certificate.
 #[derive(Copy, Clone, Debug, ValueEnum)]
-pub(crate) enum EkuOpt {
+pub enum EkuOpt {
     ServerAuth,
     ClientAuth,
     CodeSigning,
@@ -123,122 +98,70 @@ impl From<EkuOpt> for ExtendedKeyUsageOption {
     }
 }
 
-#[derive(Args)]
-pub(crate) struct GenerateKeyArgs {
-    /// Key algorithm (RSA, ECDSA, or Ed25519).
-    #[arg(short, long, alias = "algo", value_enum, ignore_case = true, default_value_t = Algorithm::Ecdsa)]
-    pub(crate) algorithm: Algorithm,
-    /// Key parameters: RSA size in bits (default 2048) or ECDSA curve
-    /// (secp256r1, secp384r1, secp521r1; default secp256r1). Ignored for Ed25519.
-    #[arg(long)]
-    pub(crate) params: Option<KeyParams>,
-    /// Write the key here instead of stdout.
-    #[arg(short, long)]
-    pub(crate) out: Option<PathBuf>,
-}
-
 /// Subject distinguished name fields, shared by the certificate subcommands.
 #[derive(Args)]
-pub(crate) struct DnArgs {
+pub struct DnArgs {
     /// Subject common name (CN), given positionally (as in Botan).
     #[arg(value_name = "COMMON_NAME")]
-    pub(crate) common_name: String,
+    pub common_name: String,
     /// Subject country (C).
     #[arg(long)]
-    pub(crate) country: Option<String>,
+    pub country: Option<String>,
     /// Subject state or province (ST).
     #[arg(long)]
-    pub(crate) state: Option<String>,
+    pub state: Option<String>,
     /// Subject locality (L).
     #[arg(long)]
-    pub(crate) locality: Option<String>,
+    pub locality: Option<String>,
     /// Subject organization (O).
     #[arg(long)]
-    pub(crate) organization: Option<String>,
+    pub organization: Option<String>,
     /// Subject organizational unit (OU).
     #[arg(long)]
-    pub(crate) organization_unit: Option<String>,
+    pub organization_unit: Option<String>,
 }
 
 /// How to obtain the subject key pair, shared by the certificate subcommands.
 #[derive(Args)]
-pub(crate) struct KeySourceArgs {
+pub struct KeySourceArgs {
     /// Algorithm for a freshly generated key (ignored when `--key` is given).
     #[arg(short, long, alias = "algo", value_enum, ignore_case = true, default_value_t = Algorithm::Ecdsa)]
-    pub(crate) algorithm: Algorithm,
+    pub algorithm: Algorithm,
     /// Key parameters for a freshly generated key: RSA size in bits (default
     /// 2048) or ECDSA curve (secp256r1, secp384r1, secp521r1; default
     /// secp256r1). Ignored for Ed25519 and when `--key` is given.
     #[arg(long)]
-    pub(crate) params: Option<KeyParams>,
+    pub params: Option<KeyParams>,
     /// Use an existing private key (PKCS#8 PEM) instead of generating one.
     #[arg(long)]
-    pub(crate) key: Option<PathBuf>,
+    pub key: Option<PathBuf>,
     /// Write a freshly generated private key here instead of stdout.
     #[arg(long)]
-    pub(crate) key_out: Option<PathBuf>,
+    pub key_out: Option<PathBuf>,
 }
 
 /// Extension, validity, and output options, shared by the certificate subcommands.
 #[derive(Args)]
-pub(crate) struct CertOptArgs {
+pub struct CertOptArgs {
     /// DNS Subject Alternative Name (repeatable).
     #[arg(long)]
-    pub(crate) dns: Vec<String>,
+    pub dns: Vec<String>,
     /// Email (rfc822) Subject Alternative Name (repeatable).
     #[arg(long)]
-    pub(crate) email: Vec<String>,
+    pub email: Vec<String>,
     /// Extended Key Usage purpose (repeatable).
     #[arg(long = "eku", value_enum)]
-    pub(crate) eku: Vec<EkuOpt>,
+    pub eku: Vec<EkuOpt>,
     /// Mark the certificate as a CA (Basic Constraints CA=true).
     #[arg(long)]
-    pub(crate) ca: bool,
+    pub ca: bool,
     /// Validity period in days from now.
     #[arg(long, default_value_t = 365)]
-    pub(crate) days: i64,
+    pub days: i64,
     /// Certificate output encoding.
     #[arg(long, value_enum, default_value_t = CertFormat::Pem)]
-    pub(crate) format: CertFormat,
+    pub format: CertFormat,
     /// Write the certificate here instead of stdout.
     #[arg(short, long)]
-    pub(crate) out: Option<PathBuf>,
-}
-
-#[derive(Args)]
-pub(crate) struct SelfSignedArgs {
-    #[command(flatten)]
-    pub(crate) dn: DnArgs,
-    #[command(flatten)]
-    pub(crate) key: KeySourceArgs,
-    #[command(flatten)]
-    pub(crate) opts: CertOptArgs,
-}
-
-#[derive(Args)]
-pub(crate) struct IssueArgs {
-    #[command(flatten)]
-    pub(crate) dn: DnArgs,
-    #[command(flatten)]
-    pub(crate) key: KeySourceArgs,
-    #[command(flatten)]
-    pub(crate) opts: CertOptArgs,
-    /// CA certificate to sign with (PEM or DER).
-    #[arg(long)]
-    pub(crate) ca_cert: PathBuf,
-    /// CA private key to sign with (PKCS#8 PEM).
-    #[arg(long)]
-    pub(crate) ca_key: PathBuf,
-}
-
-#[derive(Args)]
-pub(crate) struct InspectArgs {
-    /// Certificate to read (PEM or DER, auto-detected). Omit or `-` for stdin.
-    pub(crate) input: Option<PathBuf>,
-    /// Also print the SHA-256 fingerprint of the DER encoding.
-    #[arg(long)]
-    pub(crate) fingerprint: bool,
-    /// Emit machine-readable JSON instead of text.
-    #[arg(long)]
-    pub(crate) json: bool,
+    pub out: Option<PathBuf>,
 }
