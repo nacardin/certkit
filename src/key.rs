@@ -1,6 +1,5 @@
-use crate::error::CertKitError;
+use crate::error::{CertKitError, Result};
 use der::pem::LineEnding;
-pub type Result<T> = std::result::Result<T, CertKitError>;
 
 #[cfg(feature = "ed25519")]
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
@@ -802,8 +801,8 @@ impl KeyPair {
 /// let der_bytes = public_key.to_der()?;
 /// println!("Public key DER size: {} bytes", der_bytes.len());
 ///
-/// // Note: from_der currently only supports RSA keys
-/// // let restored_key = PublicKey::from_der(&der_bytes)?;
+/// // Note: from_rsa_pkcs1_der only supports RSA keys
+/// // let restored_key = PublicKey::from_rsa_pkcs1_der(&der_bytes)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -908,23 +907,21 @@ impl PublicKey {
         }
     }
 
-    /// Creates a public key from DER-encoded data.
+    /// Decodes an RSA public key from PKCS#1 DER-encoded bytes.
     ///
-    /// Attempts to decode DER-encoded public key data. Currently supports
-    /// RSA public keys in PKCS#1 format. Support for other key types may
-    /// be added in future versions.
+    /// This method only supports RSA public keys in PKCS#1 (`RSAPublicKey`)
+    /// format. For other key types, use [`PublicKey::from_key_pair`] or
+    /// [`PublicKey::from_x509spki`].
     ///
     /// # Arguments
-    /// * `der` - A byte slice containing the DER-encoded public key data
+    /// * `der` - A byte slice containing the PKCS#1 DER-encoded RSA public key
     ///
     /// # Returns
     /// A `Result` containing the `PublicKey` on success, or a `CertKitError` on failure.
     ///
     /// # Errors
-    /// Returns `CertKitError::DecodingError` if:
-    /// - The DER data is malformed
-    /// - The key type is not supported
-    /// - The key format is not recognized
+    /// Returns `CertKitError::RsaPkcs1Error` if the DER data is not a valid
+    /// PKCS#1 RSA public key.
     ///
     /// # Examples
     ///
@@ -937,17 +934,13 @@ impl PublicKey {
     /// let public_key = PublicKey::from_key_pair(&key_pair);
     /// let der_bytes = public_key.to_der()?;
     ///
-    /// // Recreate public key from DER
-    /// let restored_key = PublicKey::from_der(&der_bytes)?;
+    /// // Recreate public key from PKCS#1 DER
+    /// let restored_key = PublicKey::from_rsa_pkcs1_der(&der_bytes)?;
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// # Limitations
-    /// Currently only supports RSA public keys. ECDSA and Ed25519 support
-    /// will be added in future versions.
     #[cfg(feature = "rsa")]
-    pub fn from_der(der: &[u8]) -> Result<Self> {
+    pub fn from_rsa_pkcs1_der(der: &[u8]) -> Result<Self> {
         let public = RsaPublicKey::from_pkcs1_der(der)?;
         Ok(PublicKey::Rsa(public))
     }

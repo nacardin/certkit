@@ -8,7 +8,7 @@ use x509_cert::ext::pkix::name::GeneralName;
 
 use certkit::cert::Certificate;
 use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName, ToAndFromX509Extension};
-use certkit::cert::params::{CertificationRequestInfo, DistinguishedName, ExtensionParam};
+use certkit::cert::params::{CertificateParams, DistinguishedName, ExtensionParam};
 use certkit::key::{KeyPair, PublicKey};
 
 use crate::Result;
@@ -19,7 +19,7 @@ pub fn cert_info(
     dn: &DnArgs,
     key: &KeyPair,
     opts: &CertOptArgs,
-) -> Result<CertificationRequestInfo> {
+) -> Result<CertificateParams> {
     let subject = DistinguishedName::builder()
         .common_name(dn.common_name.clone())
         .maybe_country(dn.country.clone())
@@ -36,7 +36,7 @@ pub fn cert_info(
         extensions.push(san);
     }
 
-    Ok(CertificationRequestInfo::builder()
+    Ok(CertificateParams::builder()
         .subject(subject)
         .subject_public_key(PublicKey::from_key_pair(key))
         .is_ca(opts.ca)

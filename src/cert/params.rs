@@ -23,7 +23,7 @@ use crate::key::PublicKey;
 /// * `is_ca` - Indicates if the certificate is a CA.
 /// * `extensions` - Additional X.509 extensions.
 #[derive(Clone, Debug, Builder)]
-pub struct CertificationRequestInfo {
+pub struct CertificateParams {
     pub subject: DistinguishedName,
     pub subject_public_key: PublicKey,
     #[builder(default)]

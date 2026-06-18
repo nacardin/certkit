@@ -33,7 +33,7 @@
 //! ```rust,no_run
 //! use certkit::{
 //!     key::KeyPair,
-//!     cert::{Certificate, params::{CertificationRequestInfo, DistinguishedName}},
+//!     cert::{Certificate, params::{CertificateParams, DistinguishedName}},
 //! };
 //!
 //! # fn main() -> Result<(), certkit::error::CertKitError> {
@@ -47,7 +47,7 @@
 //!     .country("US".to_string())
 //!     .build();
 //!
-//! let cert_info = CertificationRequestInfo::builder()
+//! let cert_info = CertificateParams::builder()
 //!     .subject(subject)
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
 //!     .build();
@@ -67,7 +67,7 @@
 //! ```rust,no_run
 //! use certkit::{
 //!     key::KeyPair,
-//!     cert::{Certificate, CertificateWithPrivateKey, params::{CertificationRequestInfo, DistinguishedName, Validity}},
+//!     cert::{Certificate, CertificateWithPrivateKey, params::{CertificateParams, DistinguishedName, Validity}},
 //!     issuer::Issuer,
 //! };
 //!
@@ -82,7 +82,7 @@
 //!     .organization("Example Corp".to_string())
 //!     .build();
 //!
-//! let ca_cert_info = CertificationRequestInfo::builder()
+//! let ca_cert_info = CertificateParams::builder()
 //!     .subject(ca_subject)
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key))
 //!     .is_ca(true)
@@ -96,7 +96,7 @@
 //!     .common_name("server.example.com".to_string())
 //!     .build();
 //!
-//! let server_cert_info = CertificationRequestInfo::builder()
+//! let server_cert_info = CertificateParams::builder()
 //!     .subject(server_subject)
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&server_key))
 //!     .build();
@@ -116,7 +116,7 @@
 //!     key::KeyPair,
 //!     cert::{
 //!         Certificate,
-//!         params::{CertificationRequestInfo, DistinguishedName, ExtensionParam},
+//!         params::{CertificateParams, DistinguishedName, ExtensionParam},
 //!         extensions::{SubjectAltName, ExtendedKeyUsage, ExtendedKeyUsageOption, ToAndFromX509Extension},
 //!     },
 //! };
@@ -138,7 +138,7 @@
 //!     .common_name("example.com".to_string())
 //!     .build();
 //!
-//! let cert_info = CertificationRequestInfo::builder()
+//! let cert_info = CertificateParams::builder()
 //!     .subject(subject)
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
 //!     .extensions(vec![

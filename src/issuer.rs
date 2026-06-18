@@ -15,7 +15,7 @@ use crate::cert::extensions::KeyUsage;
 use crate::cert::extensions::KeyUsages;
 use crate::cert::extensions::SubjectKeyIdentifier;
 use crate::cert::params::Validity;
-use crate::cert::params::{CertificationRequestInfo, DistinguishedName, ExtensionParam};
+use crate::cert::params::{CertificateParams, DistinguishedName, ExtensionParam};
 use crate::key::KeyPair;
 use crate::tbs_certificate::TbsCertificate;
 
@@ -46,7 +46,7 @@ use crate::tbs_certificate::TbsCertificate;
 /// ```rust
 /// use certkit::{
 ///     key::KeyPair,
-///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificationRequestInfo, DistinguishedName, Validity}},
+///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificateParams, DistinguishedName, Validity}},
 ///     issuer::Issuer,
 /// };
 ///
@@ -57,7 +57,7 @@ use crate::tbs_certificate::TbsCertificate;
 ///     .organization("Example Corp".to_string())
 ///     .build();
 ///
-/// let ca_cert_info = CertificationRequestInfo::builder()
+/// let ca_cert_info = CertificateParams::builder()
 ///     .subject(ca_subject)
 ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key))
 ///     .is_ca(true)
@@ -72,7 +72,7 @@ use crate::tbs_certificate::TbsCertificate;
 ///     .common_name("client.example.com".to_string())
 ///     .build();
 ///
-/// let end_entity_info = CertificationRequestInfo::builder()
+/// let end_entity_info = CertificateParams::builder()
 ///     .subject(end_entity_subject)
 ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&end_entity_key))
 ///     .build();
@@ -90,7 +90,7 @@ use crate::tbs_certificate::TbsCertificate;
 /// use certkit::{
 ///     issuer::Issuer,
 ///     key::KeyPair,
-///     cert::params::{DistinguishedName, CertificationRequestInfo, Validity},
+///     cert::params::{DistinguishedName, CertificateParams, Validity},
 /// };
 ///
 /// struct CustomCA {
@@ -189,14 +189,14 @@ pub trait Issuer {
     /// ```rust
     /// use certkit::{
     ///     key::KeyPair,
-    ///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificationRequestInfo, DistinguishedName, Validity}},
+    ///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificateParams, DistinguishedName, Validity}},
     ///     issuer::Issuer,
     /// };
     ///
     /// // Set up CA
     /// let ca_key = KeyPair::generate_rsa(2048)?;
     /// let ca_subject = DistinguishedName::builder().common_name("Test CA".to_string()).build();
-    /// let ca_cert_info = CertificationRequestInfo::builder()
+    /// let ca_cert_info = CertificateParams::builder()
     ///     .subject(ca_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key)).is_ca(true).build();
     /// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
     /// let ca_issuer = CertificateWithPrivateKey::new(ca_cert, ca_key);
@@ -204,19 +204,19 @@ pub trait Issuer {
     /// // Create certificate request
     /// let end_key = KeyPair::generate_ecdsa_p256();
     /// let end_subject = DistinguishedName::builder().common_name("end-entity.com".to_string()).build();
-    /// let cert_request = CertificationRequestInfo::builder()
+    /// let cert_request = CertificateParams::builder()
     ///     .subject(end_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&end_key)).build();
     ///
     /// // Issue the certificate
     /// let validity = Validity::for_days(365);
     /// let issued_cert = ca_issuer.issue(&cert_request, validity)?;
     /// println!("Certificate issued with {} extensions",
-    ///          issued_cert.to_cert_info()?.extensions.len());
+    ///          issued_cert.params()?.extensions.len());
     /// # Ok::<(), certkit::error::CertKitError>(())
     /// ```
     fn issue(
         &self,
-        cert_request: &CertificationRequestInfo,
+        cert_request: &CertificateParams,
         validity: Validity,
     ) -> Result<Certificate, crate::error::CertKitError> {
         let signature_algo = match self.signing_key() {
@@ -229,7 +229,7 @@ pub trait Issuer {
             #[cfg(feature = "p521")]
             KeyPair::EcdsaP521 { .. } => SignatureAlgorithm::Sha512WithECDSA,
             #[cfg(feature = "ed25519")]
-            KeyPair::Ed25519 { .. } => SignatureAlgorithm::Sha256WithEdDSA,
+            KeyPair::Ed25519 { .. } => SignatureAlgorithm::Ed25519,
         };
 
         log::debug!(
@@ -368,13 +368,13 @@ mod tests {
     use crate::cert::extensions::{
         AuthorityKeyIdentifier, SubjectKeyIdentifier, ToAndFromX509Extension,
     };
-    use crate::cert::params::{CertificationRequestInfo, DistinguishedName, Validity};
+    use crate::cert::params::{CertificateParams, DistinguishedName, Validity};
     use crate::cert::{Certificate, CertificateWithPrivateKey};
     use crate::key::{KeyPair, PublicKey};
 
-    fn request(common_name: &str, key: &KeyPair, is_ca: bool) -> CertificationRequestInfo {
+    fn request(common_name: &str, key: &KeyPair, is_ca: bool) -> CertificateParams {
         crate::init_test_logger();
-        CertificationRequestInfo::builder()
+        CertificateParams::builder()
             .subject(
                 DistinguishedName::builder()
                     .common_name(common_name.to_string())
@@ -387,7 +387,7 @@ mod tests {
 
     /// Returns the first extension of type `E` carried by `cert`, if present.
     fn extension<E: ToAndFromX509Extension>(cert: &Certificate) -> Option<E> {
-        let info = cert.to_cert_info().unwrap();
+        let info = cert.params().unwrap();
         info.extensions
             .iter()
             .find(|ext| ext.oid == E::OID)

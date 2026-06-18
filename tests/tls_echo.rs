@@ -17,7 +17,7 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, Server
 
 use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName};
 use certkit::cert::params::{
-    CertificationRequestInfo, DistinguishedName, ExtensionParam, Validity,
+    CertificateParams, DistinguishedName, ExtensionParam, Validity,
 };
 use certkit::cert::{Certificate, CertificateWithPrivateKey};
 use certkit::issuer::Issuer;
@@ -26,7 +26,7 @@ use certkit::key::{KeyPair, PublicKey};
 /// Generate a self-signed root CA using the provided key generation function.
 fn generate_ca(gen_key: &dyn Fn() -> KeyPair) -> CertificateWithPrivateKey {
     let key = gen_key();
-    let info = CertificationRequestInfo::builder()
+    let info = CertificateParams::builder()
         .subject(
             DistinguishedName::builder()
                 .common_name("Test Root CA".to_string())
@@ -44,7 +44,7 @@ fn generate_intermediate(
     gen_key: &dyn Fn() -> KeyPair,
 ) -> CertificateWithPrivateKey {
     let key = gen_key();
-    let info = CertificationRequestInfo::builder()
+    let info = CertificateParams::builder()
         .subject(
             DistinguishedName::builder()
                 .common_name("Test Intermediate CA".to_string())
@@ -69,7 +69,7 @@ fn issue_end_entity(
     let san = SubjectAltName {
         names: san_dns.iter().map(|s| s.to_string()).collect(),
     };
-    let info = CertificationRequestInfo::builder()
+    let info = CertificateParams::builder()
         .subject(
             DistinguishedName::builder()
                 .common_name(cn.to_string())
