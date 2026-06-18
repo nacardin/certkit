@@ -797,15 +797,8 @@ impl KeyPair {
             }
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key } => {
-                let pk_bytes = signing_key.verifying_key().to_bytes();
-                x509_cert::spki::SubjectPublicKeyInfoOwned {
-                    algorithm: x509_cert::spki::AlgorithmIdentifierOwned {
-                        oid: const_oid::ObjectIdentifier::new_unwrap("1.3.101.112"),
-                        parameters: None,
-                    },
-                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes)
-                        .expect("Ed25519 public key bytes are always valid for BitString"),
-                }
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(signing_key.verifying_key())
+                    .expect("valid Ed25519 key always encodes to SPKI")
             }
         }
     }
@@ -1046,15 +1039,8 @@ impl PublicKey {
             }
             #[cfg(feature = "ed25519")]
             PublicKey::Ed25519(verifying_key) => {
-                let pk_bytes = verifying_key.to_bytes();
-                x509_cert::spki::SubjectPublicKeyInfoOwned {
-                    algorithm: x509_cert::spki::AlgorithmIdentifierOwned {
-                        oid: const_oid::ObjectIdentifier::new_unwrap("1.3.101.112"),
-                        parameters: None,
-                    },
-                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes)
-                        .expect("Ed25519 public key bytes are always valid for BitString"),
-                }
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid Ed25519 key always encodes to SPKI")
             }
         }
     }

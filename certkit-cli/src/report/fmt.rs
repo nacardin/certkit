@@ -35,11 +35,6 @@ pub(super) fn format_ip(octets: &[u8]) -> String {
     }
 }
 
-/// Maps a dotted OID string to a friendly name, falling back to the OID itself.
-/// `ecdsa-with-SHA1` (legacy), which const-oid's database doesn't carry — its
-/// ECDSA signature series starts at SHA-224.
-const ECDSA_WITH_SHA1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.1");
-
 /// Maps an OID to a friendly name.
 ///
 /// Known Extended Key Usage purposes and signature algorithms get a curated
@@ -59,8 +54,6 @@ pub(super) fn describe_oid(oid: ObjectIdentifier) -> String {
         "timeStamping"
     } else if oid == rfc5280::ID_KP_OCSP_SIGNING {
         "OCSPSigning"
-    } else if oid == ECDSA_WITH_SHA1 {
-        "ecdsa-with-SHA1"
     } else if oid == rfc5912::ECDSA_WITH_SHA_256 {
         "ecdsa-with-SHA256"
     } else if oid == rfc5912::ECDSA_WITH_SHA_384 {
