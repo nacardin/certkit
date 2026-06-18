@@ -84,7 +84,8 @@ impl DistinguishedName {
         }
 
         let rfc4514_name = rdns.join(",");
-        RdnSequence::from_str(&rfc4514_name).unwrap()
+        RdnSequence::from_str(&rfc4514_name)
+            .expect("RDN sequence built from validated fields is always valid")
     }
 
     /// Creates a `DistinguishedName` from an X.509-compatible format.

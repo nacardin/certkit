@@ -406,7 +406,11 @@ impl KeyPair {
     pub fn get_public_key_der(&self) -> Vec<u8> {
         match self {
             #[cfg(feature = "rsa")]
-            KeyPair::Rsa { public, .. } => public.to_pkcs1_der().unwrap().as_bytes().to_vec(),
+            KeyPair::Rsa { public, .. } => public
+                .to_pkcs1_der()
+                .expect("valid RSA public key always encodes to PKCS#1 DER")
+                .as_bytes()
+                .to_vec(),
             #[cfg(feature = "p256")]
             KeyPair::EcdsaP256 { verifying_key, .. } => verifying_key.to_sec1_bytes().to_vec(),
             #[cfg(feature = "p384")]
@@ -501,10 +505,8 @@ impl KeyPair {
         log::trace!("importing key from {} bytes of DER", der.len());
         // Try RSA PKCS#1 first
         #[cfg(feature = "rsa")]
-        if let (Ok(private), Ok(public)) = (
-            RsaPrivateKey::from_pkcs1_der(der),
-            RsaPublicKey::from_pkcs1_der(der),
-        ) {
+        if let Ok(private) = RsaPrivateKey::from_pkcs1_der(der) {
+            let public = RsaPublicKey::from(&private);
             return Ok(KeyPair::Rsa {
                 private: Box::new(private),
                 public,
@@ -655,19 +657,23 @@ impl KeyPair {
         match self {
             #[cfg(feature = "rsa")]
             KeyPair::Rsa { public, .. } => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone()).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone())
+                    .expect("valid RSA key always encodes to SPKI")
             }
             #[cfg(feature = "p256")]
             KeyPair::EcdsaP256 { verifying_key, .. } => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid P-256 key always encodes to SPKI")
             }
             #[cfg(feature = "p384")]
             KeyPair::EcdsaP384 { verifying_key, .. } => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid P-384 key always encodes to SPKI")
             }
             #[cfg(feature = "p521")]
             KeyPair::EcdsaP521 { public_key, .. } => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*public_key).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*public_key)
+                    .expect("valid P-521 key always encodes to SPKI")
             }
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key } => {
@@ -677,7 +683,8 @@ impl KeyPair {
                         oid: const_oid::ObjectIdentifier::new_unwrap("1.3.101.112"),
                         parameters: None,
                     },
-                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes).unwrap(),
+                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes)
+                        .expect("Ed25519 public key bytes are always valid for BitString"),
                 }
             }
         }
@@ -879,19 +886,23 @@ impl PublicKey {
         match self {
             #[cfg(feature = "rsa")]
             PublicKey::Rsa(public) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone()).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone())
+                    .expect("valid RSA key always encodes to SPKI")
             }
             #[cfg(feature = "p256")]
             PublicKey::EcdsaP256(verifying_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid P-256 key always encodes to SPKI")
             }
             #[cfg(feature = "p384")]
             PublicKey::EcdsaP384(verifying_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid P-384 key always encodes to SPKI")
             }
             #[cfg(feature = "p521")]
             PublicKey::EcdsaP521(public_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*public_key).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*public_key)
+                    .expect("valid P-521 key always encodes to SPKI")
             }
             #[cfg(feature = "ed25519")]
             PublicKey::Ed25519(verifying_key) => {
@@ -901,7 +912,8 @@ impl PublicKey {
                         oid: const_oid::ObjectIdentifier::new_unwrap("1.3.101.112"),
                         parameters: None,
                     },
-                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes).unwrap(),
+                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes)
+                        .expect("Ed25519 public key bytes are always valid for BitString"),
                 }
             }
         }

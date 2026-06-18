@@ -342,7 +342,7 @@ pub trait Issuer {
             extensions: combined_extensions,
         };
 
-        let tbs_cert_inner = tbs_cert.to_tbs_certificate_inner();
+        let tbs_cert_inner = tbs_cert.to_tbs_certificate_inner()?;
 
         let signature = self
             .signing_key()

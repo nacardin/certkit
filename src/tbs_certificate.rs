@@ -40,6 +40,18 @@ pub struct TbsCertificate {
     pub extensions: Vec<ExtensionParam>,
 }
 
+/// Generates an RFC 5280-compliant random serial number (20 bytes, positive, non-zero).
+fn random_serial() -> Vec<u8> {
+    use rand_core::RngCore;
+    let mut buf = [0u8; 20];
+    rand_core::OsRng.fill_bytes(&mut buf);
+    // Ensure leading bit is 0 so the DER INTEGER is positive.
+    buf[0] &= 0x7F;
+    // Ensure non-zero.
+    buf[19] |= 0x01;
+    buf.to_vec()
+}
+
 impl TbsCertificate {
     /// Creates a new `TbsCertificate` with default values.
     ///
@@ -60,7 +72,7 @@ impl TbsCertificate {
         let not_after = not_before + time::Duration::days(365);
 
         Self {
-            serial_number: vec![1],
+            serial_number: random_serial(),
             signature_algorithm,
             issuer,
             not_before,
@@ -73,9 +85,11 @@ impl TbsCertificate {
 
     /// Converts the `TbsCertificate` into a `TbsCertificateInner` for DER encoding.
     ///
-    /// # Returns
-    /// A `TbsCertificateInner` object suitable for DER encoding.
-    pub fn to_tbs_certificate_inner(&self) -> TbsCertificateInner {
+    /// # Errors
+    /// Returns `CertKitError::EncodingError` if the validity timestamps fall
+    /// outside the UtcTime range (1950–2049). For dates beyond 2049, use
+    /// GeneralizedTime encoding instead.
+    pub fn to_tbs_certificate_inner(&self) -> Result<TbsCertificateInner, CertKitError> {
         // Convert to x509_cert's format
         let algorithm_id: x509_cert::spki::AlgorithmIdentifierOwned =
             self.signature_algorithm.clone().into();
@@ -87,16 +101,26 @@ impl TbsCertificate {
             .map(|ext| x509_cert::ext::Extension {
                 extn_id: ext.oid,
                 critical: ext.critical,
-                extn_value: OctetString::new(ext.value.clone()).unwrap(),
+                extn_value: OctetString::new(ext.value.clone())
+                    .expect("extension value bytes are always valid for OctetString"),
             })
             .collect::<Vec<_>>();
 
-        // Create validity
+        // Create validity — UtcTime only covers 1950–2049; dates outside that
+        // range are a real operational concern for long-lived CA certificates.
         let not_before = x509_cert::time::Time::UtcTime(
-            der::asn1::UtcTime::from_system_time(self.not_before.into()).unwrap(),
+            der::asn1::UtcTime::from_system_time(self.not_before.into()).map_err(|e| {
+                CertKitError::EncodingError(format!(
+                    "not_before timestamp out of UtcTime range (1950-2049): {e}"
+                ))
+            })?,
         );
         let not_after = x509_cert::time::Time::UtcTime(
-            der::asn1::UtcTime::from_system_time(self.not_after.into()).unwrap(),
+            der::asn1::UtcTime::from_system_time(self.not_after.into()).map_err(|e| {
+                CertKitError::EncodingError(format!(
+                    "not_after timestamp out of UtcTime range (1950-2049): {e}"
+                ))
+            })?,
         );
 
         let validity = x509_cert::time::Validity {
@@ -105,40 +129,13 @@ impl TbsCertificate {
         };
 
         // Create SerialNumber
-        let serial_number = SerialNumber::new(self.serial_number.as_slice()).unwrap();
+        let serial_number = SerialNumber::new(self.serial_number.as_slice())
+            .expect("serial number bytes from CSPRNG or caller are always valid");
 
         // Convert the subject public key to SPKI format
-        let subject_public_key_info = match &self.subject_public_key {
-            #[cfg(feature = "rsa")]
-            PublicKey::Rsa(public) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone()).unwrap()
-            }
-            #[cfg(feature = "p256")]
-            PublicKey::EcdsaP256(verifying_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
-            }
-            #[cfg(feature = "p384")]
-            PublicKey::EcdsaP384(verifying_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
-            }
-            #[cfg(feature = "p521")]
-            PublicKey::EcdsaP521(public_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*public_key).unwrap()
-            }
-            #[cfg(feature = "ed25519")]
-            PublicKey::Ed25519(verifying_key) => {
-                let pk_bytes = verifying_key.to_bytes();
-                x509_cert::spki::SubjectPublicKeyInfoOwned {
-                    algorithm: x509_cert::spki::AlgorithmIdentifierOwned {
-                        oid: const_oid::ObjectIdentifier::new_unwrap("1.3.101.112"),
-                        parameters: None,
-                    },
-                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes).unwrap(),
-                }
-            }
-        };
+        let subject_public_key_info = self.subject_public_key.as_spki();
 
-        TbsCertificateInner {
+        Ok(TbsCertificateInner {
             version: Version::V3,
             serial_number,
             signature: algorithm_id,
@@ -149,7 +146,7 @@ impl TbsCertificate {
             issuer_unique_id: None,
             subject_unique_id: None,
             extensions: Some(extensions),
-        }
+        })
     }
 
     /// Creates a `TbsCertificate` from a `TbsCertificateInner`.
@@ -224,8 +221,10 @@ impl TbsCertificate {
     ///
     /// # Returns
     /// A byte vector containing the DER-encoded certificate.
-    pub fn to_der(&self) -> Result<Vec<u8>, der::Error> {
-        self.to_tbs_certificate_inner().to_der()
+    pub fn to_der(&self) -> Result<Vec<u8>, CertKitError> {
+        self.to_tbs_certificate_inner()?
+            .to_der()
+            .map_err(|e| CertKitError::EncodingError(e.to_string()))
     }
 }
 

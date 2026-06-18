@@ -415,7 +415,7 @@ impl Certificate {
 
         let extensions: Vec<ExtensionParam> = inner_tbs_cert
             .extensions
-            .unwrap()
+            .unwrap_or_default()
             .iter()
             .map(|ext| ExtensionParam {
                 oid: ext.extn_id,
