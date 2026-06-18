@@ -57,22 +57,24 @@ fn generate_intermediate(
 }
 
 /// Issue an end-entity certificate from an issuing CA.
+///
+/// `dns_name` is used as both the Subject CN and the sole SAN DNS entry,
+/// matching the modern convention where CN mirrors the primary SAN.
 fn issue_end_entity(
     issuer: &CertificateWithPrivateKey,
     gen_key: &dyn Fn() -> KeyPair,
-    cn: &str,
-    san_dns: &[&str],
+    dns_name: &str,
     usage: ExtendedKeyUsageOption,
 ) -> CertificateWithPrivateKey {
     let key = gen_key();
     let san = SubjectAltName {
-        dns_names: san_dns.iter().map(|s| s.to_string()).collect(),
+        dns_names: vec![dns_name.to_string()],
         ..Default::default()
     };
     let params = CertificateParams::builder()
         .subject(
             DistinguishedName::builder()
-                .common_name(cn.to_string())
+                .common_name(dns_name.to_string())
                 .build(),
         )
         .subject_public_key(PublicKey::from_key_pair(&key))
@@ -104,14 +106,12 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
         &intermediate_ca,
         keygen,
         "localhost",
-        &["localhost"],
         ExtendedKeyUsageOption::ServerAuth,
     );
     let client = issue_end_entity(
         &intermediate_ca,
         keygen,
         "client.local",
-        &["client.local"],
         ExtendedKeyUsageOption::ClientAuth,
     );
 
