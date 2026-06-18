@@ -64,10 +64,7 @@ use crate::tbs_certificate::TbsCertificate;
 ///     .build();
 ///
 /// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
-/// let ca_issuer = CertificateWithPrivateKey {
-///     cert: ca_cert,
-///     key: ca_key,
-/// };
+/// let ca_issuer = CertificateWithPrivateKey::new(ca_cert, ca_key);
 ///
 /// // Issue an end-entity certificate
 /// let end_entity_key = KeyPair::generate_rsa(2048)?;
@@ -202,7 +199,7 @@ pub trait Issuer {
     /// let ca_cert_info = CertificationRequestInfo::builder()
     ///     .subject(ca_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key)).is_ca(true).build();
     /// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
-    /// let ca_issuer = CertificateWithPrivateKey { cert: ca_cert, key: ca_key };
+    /// let ca_issuer = CertificateWithPrivateKey::new(ca_cert, ca_key);
     ///
     /// // Create certificate request
     /// let end_key = KeyPair::generate_ecdsa_p256();
@@ -217,7 +214,11 @@ pub trait Issuer {
     ///          issued_cert.to_cert_info()?.extensions.len());
     /// # Ok::<(), certkit::error::CertKitError>(())
     /// ```
-    fn issue(&self, cert_request: &CertificationRequestInfo, validity: Validity) -> Result<Certificate, crate::error::CertKitError> {
+    fn issue(
+        &self,
+        cert_request: &CertificationRequestInfo,
+        validity: Validity,
+    ) -> Result<Certificate, crate::error::CertKitError> {
         let signature_algo = match self.signing_key() {
             #[cfg(feature = "rsa")]
             KeyPair::Rsa { .. } => SignatureAlgorithm::Sha256WithRSA,
@@ -346,9 +347,9 @@ pub trait Issuer {
         let signature = self
             .signing_key()
             .sign_data(&tbs_cert_inner.to_der()?)
-            .map_err(|e| crate::error::CertKitError::CertificateError(
-                format!("signing failed: {e}"),
-            ))?;
+            .map_err(|e| {
+                crate::error::CertKitError::CertificateError(format!("signing failed: {e}"))
+            })?;
         log::trace!("certificate signed ({} byte signature)", signature.len());
 
         let cert_inner = CertificateInner {
@@ -357,7 +358,7 @@ pub trait Issuer {
             signature: der::asn1::BitString::from_bytes(&signature)?,
         };
 
-        Ok(Certificate { inner: cert_inner })
+        Ok(Certificate::from_inner(cert_inner))
     }
 }
 
@@ -403,8 +404,8 @@ mod tests {
         let key = KeyPair::generate_ecdsa_p256();
         let cert = Certificate::new_self_signed(&request("p256.ca", &key, true), &key).unwrap();
         let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_256;
-        assert_eq!(cert.inner.signature_algorithm.oid, expected);
-        assert_eq!(cert.inner.tbs_certificate.signature.oid, expected);
+        assert_eq!(cert.inner().signature_algorithm.oid, expected);
+        assert_eq!(cert.inner().tbs_certificate.signature.oid, expected);
     }
 
     #[cfg(feature = "p384")]
@@ -413,8 +414,8 @@ mod tests {
         let key = KeyPair::generate_ecdsa_p384();
         let cert = Certificate::new_self_signed(&request("p384.ca", &key, true), &key).unwrap();
         let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_384;
-        assert_eq!(cert.inner.signature_algorithm.oid, expected);
-        assert_eq!(cert.inner.tbs_certificate.signature.oid, expected);
+        assert_eq!(cert.inner().signature_algorithm.oid, expected);
+        assert_eq!(cert.inner().tbs_certificate.signature.oid, expected);
     }
 
     #[cfg(feature = "p521")]
@@ -423,8 +424,8 @@ mod tests {
         let key = KeyPair::generate_ecdsa_p521();
         let cert = Certificate::new_self_signed(&request("p521.ca", &key, true), &key).unwrap();
         let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_512;
-        assert_eq!(cert.inner.signature_algorithm.oid, expected);
-        assert_eq!(cert.inner.tbs_certificate.signature.oid, expected);
+        assert_eq!(cert.inner().signature_algorithm.oid, expected);
+        assert_eq!(cert.inner().tbs_certificate.signature.oid, expected);
     }
 
     /// Issued certificates carry a Subject Key Identifier, and their Authority
@@ -434,33 +435,32 @@ mod tests {
     #[test]
     fn issued_chain_links_aki_to_issuer_ski() {
         let root_key = KeyPair::generate_ecdsa_p256();
-        let root = Certificate::new_self_signed(&request("Root CA", &root_key, true), &root_key).unwrap();
-        let root_ca = CertificateWithPrivateKey {
-            cert: root,
-            key: root_key,
-        };
+        let root =
+            Certificate::new_self_signed(&request("Root CA", &root_key, true), &root_key).unwrap();
+        let root_ca = CertificateWithPrivateKey::new(root, root_key);
 
         let int_key = KeyPair::generate_ecdsa_p256();
-        let int = root_ca.issue(
-            &request("Intermediate CA", &int_key, true),
-            Validity::for_days(365),
-        ).unwrap();
-        let int_ca = CertificateWithPrivateKey {
-            cert: int,
-            key: int_key,
-        };
+        let int = root_ca
+            .issue(
+                &request("Intermediate CA", &int_key, true),
+                Validity::for_days(365),
+            )
+            .unwrap();
+        let int_ca = CertificateWithPrivateKey::new(int, int_key);
 
         let leaf_key = KeyPair::generate_ecdsa_p256();
-        let leaf = int_ca.issue(&request("leaf", &leaf_key, false), Validity::for_days(365)).unwrap();
+        let leaf = int_ca
+            .issue(&request("leaf", &leaf_key, false), Validity::for_days(365))
+            .unwrap();
 
-        let root_ski = extension::<SubjectKeyIdentifier>(&root_ca.cert).expect("root SKI");
-        let int_ski = extension::<SubjectKeyIdentifier>(&int_ca.cert).expect("intermediate SKI");
+        let root_ski = extension::<SubjectKeyIdentifier>(root_ca.cert()).expect("root SKI");
+        let int_ski = extension::<SubjectKeyIdentifier>(int_ca.cert()).expect("intermediate SKI");
         assert!(
             extension::<SubjectKeyIdentifier>(&leaf).is_some(),
             "leaf must carry a Subject Key Identifier"
         );
 
-        let int_aki = extension::<AuthorityKeyIdentifier>(&int_ca.cert).expect("intermediate AKI");
+        let int_aki = extension::<AuthorityKeyIdentifier>(int_ca.cert()).expect("intermediate AKI");
         let leaf_aki = extension::<AuthorityKeyIdentifier>(&leaf).expect("leaf AKI");
 
         // keyId-only AKI (PKIX profile).

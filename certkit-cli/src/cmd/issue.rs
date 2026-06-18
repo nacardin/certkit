@@ -49,10 +49,7 @@ impl IssueOpt {
         );
         let ca_cert = load_ca_cert(&self.ca_cert)?;
         let ca_key = KeyPair::import_from_pkcs8_pem(&fs::read_to_string(&self.ca_key)?)?;
-        let ca = CertificateWithPrivateKey {
-            cert: ca_cert,
-            key: ca_key,
-        };
+        let ca = CertificateWithPrivateKey::new(ca_cert, ca_key);
 
         let cert_info = cert_info(&self.dn, &key, &self.opts)?;
         let cert = ca.issue(&cert_info, Validity::for_days(self.opts.days))?;

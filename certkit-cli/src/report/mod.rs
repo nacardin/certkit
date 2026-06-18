@@ -8,11 +8,11 @@
 mod extensions;
 mod fmt;
 
-use der::Encode;
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use x509_cert::Certificate as X509Certificate;
 
+use certkit::cert::Certificate;
 use certkit::key::PublicKey;
 
 use crate::Result;
@@ -44,16 +44,17 @@ pub struct CertReport {
 }
 
 impl CertReport {
-    pub fn from_cert(cert: &X509Certificate, want_fingerprint: bool) -> Result<Self> {
-        let tbs = &cert.tbs_certificate;
+    pub fn from_cert(cert: &Certificate, want_fingerprint: bool) -> Result<Self> {
+        use der::Decode;
+        let der_bytes = cert.to_der()?;
+        let raw = X509Certificate::from_der(&der_bytes)?;
+        let tbs = &raw.tbs_certificate;
 
         let not_before = tbs.validity.not_before.to_unix_duration().as_secs() as i64;
         let not_after = tbs.validity.not_after.to_unix_duration().as_secs() as i64;
         let now = OffsetDateTime::now_utc().unix_timestamp();
 
-        let fingerprint_sha256 = want_fingerprint
-            .then(|| cert.to_der().map(|der| hex_colons(&Sha256::digest(der))))
-            .transpose()?;
+        let fingerprint_sha256 = want_fingerprint.then(|| hex_colons(&Sha256::digest(&der_bytes)));
 
         let extensions = tbs
             .extensions
@@ -73,7 +74,7 @@ impl CertReport {
             not_yet_valid: not_before > now,
             days_remaining: (not_after - now).div_euclid(86_400),
             public_key: describe_public_key(&tbs.subject_public_key_info),
-            signature_algorithm: describe_oid(cert.signature_algorithm.oid),
+            signature_algorithm: describe_oid(raw.signature_algorithm.oid),
             fingerprint_sha256,
             extensions,
         })

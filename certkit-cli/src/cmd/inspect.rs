@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 use clap::Args;
 
+use certkit::cert::Certificate;
+
 use crate::Result;
-use crate::certs::parse_x509;
 use crate::io::read_cert_input;
 use crate::report::CertReport;
 
@@ -32,7 +33,7 @@ impl InspectOpt {
         log::debug!("inspecting certificate from {source}");
 
         let bytes = read_cert_input(&self.input)?;
-        let cert = parse_x509(&bytes)?;
+        let cert = Certificate::from_bytes(&bytes)?;
         let report = CertReport::from_cert(&cert, self.fingerprint)?;
 
         let out = if self.json {

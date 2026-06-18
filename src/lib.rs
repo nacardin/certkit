@@ -89,10 +89,7 @@
 //!     .build();
 //!
 //! let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
-//! let ca_with_key = CertificateWithPrivateKey {
-//!     cert: ca_cert,
-//!     key: ca_key,
-//! };
+//! let ca_with_key = CertificateWithPrivateKey::new(ca_cert, ca_key);
 //!
 //! // Create server certificate signed by CA
 //! let server_subject = DistinguishedName::builder()

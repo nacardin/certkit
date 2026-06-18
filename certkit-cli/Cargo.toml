@@ -17,7 +17,7 @@ name = "certkit"
 path = "src/main.rs"
 
 [dependencies]
-certkit = { path = "..", version = "0.1.2" }
+certkit = { path = "..", version = "0.2.0" }
 clap = { version = "4", features = ["derive"] }
 const-oid = { version = "0.9", features = ["db"] }
 der = "0.7"

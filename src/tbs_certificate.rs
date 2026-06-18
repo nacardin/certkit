@@ -256,8 +256,9 @@ mod tests {
     #[test]
     fn parses_ecdsa_p384_signature_algorithm() {
         let cert = self_signed(&KeyPair::generate_ecdsa_p384());
-        let parsed = TbsCertificate::from_tbs_certificate_inner(cert.inner.tbs_certificate.clone())
-            .expect("a P-384 certificate must parse");
+        let parsed =
+            TbsCertificate::from_tbs_certificate_inner(cert.inner().tbs_certificate.clone())
+                .expect("a P-384 certificate must parse");
         assert!(matches!(
             parsed.signature_algorithm,
             SignatureAlgorithm::Sha384WithECDSA
@@ -268,8 +269,9 @@ mod tests {
     #[test]
     fn parses_ecdsa_p521_signature_algorithm() {
         let cert = self_signed(&KeyPair::generate_ecdsa_p521());
-        let parsed = TbsCertificate::from_tbs_certificate_inner(cert.inner.tbs_certificate.clone())
-            .expect("a P-521 certificate must parse");
+        let parsed =
+            TbsCertificate::from_tbs_certificate_inner(cert.inner().tbs_certificate.clone())
+                .expect("a P-521 certificate must parse");
         assert!(matches!(
             parsed.signature_algorithm,
             SignatureAlgorithm::Sha512WithECDSA

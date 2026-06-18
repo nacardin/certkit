@@ -205,11 +205,63 @@ impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
 /// ```
 #[derive(Debug, Clone)]
 pub struct Certificate {
-    /// The inner representation of the certificate.
-    pub inner: CertificateInner,
+    inner: CertificateInner,
 }
 
 impl Certificate {
+    /// Creates a `Certificate` from the raw `x509_cert` inner representation.
+    pub(crate) fn from_inner(inner: CertificateInner) -> Self {
+        Self { inner }
+    }
+
+    /// Returns a reference to the underlying `x509_cert` certificate.
+    #[cfg(test)]
+    pub(crate) fn inner(&self) -> &CertificateInner {
+        &self.inner
+    }
+
+    /// Parses a certificate from DER-encoded bytes.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::DecodingError` if the bytes are not a valid
+    /// DER-encoded X.509 certificate.
+    pub fn from_der(bytes: &[u8]) -> Result<Self> {
+        use der::Decode;
+        let inner = CertificateInner::from_der(bytes)
+            .map_err(|e| CertKitError::DecodingError(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Parses a certificate from a PEM-encoded string.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::DecodingError` if the string is not a valid
+    /// PEM-encoded X.509 certificate.
+    pub fn from_pem(pem: &str) -> Result<Self> {
+        use der::DecodePem;
+        let inner = CertificateInner::from_pem(pem)
+            .map_err(|e| CertKitError::DecodingError(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Parses a certificate from PEM or DER-encoded bytes (auto-detected).
+    ///
+    /// If the bytes begin with `-----BEGIN`, they are treated as PEM;
+    /// otherwise they are decoded as DER.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::DecodingError` if the bytes are not a valid
+    /// X.509 certificate in either format.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.starts_with(b"-----BEGIN") {
+            let pem = std::str::from_utf8(bytes)
+                .map_err(|e| CertKitError::DecodingError(format!("invalid UTF-8 in PEM: {e}")))?;
+            Self::from_pem(pem)
+        } else {
+            Self::from_der(bytes)
+        }
+    }
+
     /// Encodes the certificate into DER format.
     ///
     /// Converts the certificate to Distinguished Encoding Rules (DER) format,
@@ -503,10 +555,7 @@ impl Certificate {
     /// - **Development/testing**: Quick certificate generation for testing
     /// - **Internal services**: Certificates for internal-only applications
     /// - **Bootstrap certificates**: Initial certificates for certificate enrollment
-    pub fn new_self_signed(
-        cert_info: &CertificationRequestInfo,
-        key: &KeyPair,
-    ) -> Result<Self> {
+    pub fn new_self_signed(cert_info: &CertificationRequestInfo, key: &KeyPair) -> Result<Self> {
         let now = OffsetDateTime::now_utc();
         Self::new_self_signed_with_expiration(cert_info, key, now, now + time::Duration::days(365))
     }
@@ -694,10 +743,7 @@ impl Issuer for SelfIssuer<'_> {
 /// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
 ///
 /// // Combine certificate and private key
-/// let ca_with_key = CertificateWithPrivateKey {
-///     cert: ca_cert,
-///     key: ca_key,
-/// };
+/// let ca_with_key = CertificateWithPrivateKey::new(ca_cert, ca_key);
 ///
 /// println!("CA certificate with private key created");
 /// # Ok::<(), certkit::error::CertKitError>(())
@@ -717,7 +763,7 @@ impl Issuer for SelfIssuer<'_> {
 /// # let ca_cert_info = CertificationRequestInfo::builder()
 ///     .subject(ca_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key)).is_ca(true).build();
 /// # let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
-/// # let ca_with_key = CertificateWithPrivateKey { cert: ca_cert, key: ca_key };
+/// # let ca_with_key = CertificateWithPrivateKey::new(ca_cert, ca_key);
 ///
 /// // Generate end-entity key pair
 /// let server_key = KeyPair::generate_rsa(2048)?;
@@ -748,10 +794,31 @@ impl Issuer for SelfIssuer<'_> {
 /// - **Backup and Recovery**: Ensure secure backup of CA key material
 #[derive(Debug, Clone)]
 pub struct CertificateWithPrivateKey {
-    /// The X.509 certificate
-    pub cert: Certificate,
-    /// The private key corresponding to the public key in the certificate
-    pub key: crate::key::KeyPair,
+    cert: Certificate,
+    key: crate::key::KeyPair,
+}
+
+impl CertificateWithPrivateKey {
+    /// Creates a new `CertificateWithPrivateKey` pairing a certificate with
+    /// its corresponding private key.
+    pub fn new(cert: Certificate, key: KeyPair) -> Self {
+        Self { cert, key }
+    }
+
+    /// Returns a reference to the certificate.
+    pub fn cert(&self) -> &Certificate {
+        &self.cert
+    }
+
+    /// Returns a reference to the private key.
+    pub fn key(&self) -> &KeyPair {
+        &self.key
+    }
+
+    /// Consumes self and returns the certificate and key as a tuple.
+    pub fn into_parts(self) -> (Certificate, KeyPair) {
+        (self.cert, self.key)
+    }
 }
 
 impl Issuer for CertificateWithPrivateKey {

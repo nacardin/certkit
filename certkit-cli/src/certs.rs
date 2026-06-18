@@ -1,16 +1,8 @@
-//! Assembling and parsing certificates.
-//!
-//! [`cert_info`] builds the certification request info (subject, key, and
-//! extensions) from the parsed arguments; [`build_san`] is its Subject
-//! Alternative Name helper. [`load_ca_cert`] and [`parse_x509`] read existing
-//! certificates from PEM or DER.
-
 use std::fs;
 use std::path::Path;
 
+use der::Encode;
 use der::asn1::Ia5String;
-use der::{Decode, DecodePem, Encode};
-use x509_cert::Certificate as X509Certificate;
 use x509_cert::ext::pkix;
 use x509_cert::ext::pkix::name::GeneralName;
 
@@ -85,16 +77,5 @@ fn build_san(dns: &[String], email: &[String]) -> Result<Option<ExtensionParam>>
 
 /// Loads a CA certificate from a PEM or DER file (auto-detected).
 pub fn load_ca_cert(path: &Path) -> Result<Certificate> {
-    Ok(Certificate {
-        inner: parse_x509(&fs::read(path)?)?,
-    })
-}
-
-/// Parses an X.509 certificate from PEM or DER bytes (auto-detected).
-pub fn parse_x509(bytes: &[u8]) -> Result<X509Certificate> {
-    Ok(if bytes.starts_with(b"-----BEGIN") {
-        X509Certificate::from_pem(bytes)?
-    } else {
-        X509Certificate::from_der(bytes)?
-    })
+    Ok(Certificate::from_bytes(&fs::read(path)?)?)
 }

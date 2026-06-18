@@ -35,10 +35,7 @@ fn generate_ca(gen_key: &dyn Fn() -> KeyPair) -> CertificateWithPrivateKey {
         .subject_public_key(PublicKey::from_key_pair(&key))
         .is_ca(true)
         .build();
-    CertificateWithPrivateKey {
-        cert: Certificate::new_self_signed(&info, &key).unwrap(),
-        key,
-    }
+    CertificateWithPrivateKey::new(Certificate::new_self_signed(&info, &key).unwrap(), key)
 }
 
 /// Issue an intermediate CA signed by `parent`.
@@ -57,7 +54,7 @@ fn generate_intermediate(
         .is_ca(true)
         .build();
     let cert = parent.issue(&info, Validity::for_days(1)).unwrap();
-    CertificateWithPrivateKey { cert, key }
+    CertificateWithPrivateKey::new(cert, key)
 }
 
 /// Issue an end-entity certificate from an issuing CA.
@@ -136,8 +133,8 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
     );
 
     // ── 2. Prepare DER materials for rustls ─────────────────────────────
-    let root_cert_der = cert_der(&root_ca.cert);
-    let intermediate_cert_der = cert_der(&intermediate_ca.cert);
+    let root_cert_der = cert_der(root_ca.cert());
+    let intermediate_cert_der = cert_der(intermediate_ca.cert());
     let server_chain = vec![cert_der(&server_cert), intermediate_cert_der.clone()];
     let client_chain = vec![cert_der(&client_cert), intermediate_cert_der];
     let server_key_der = key_der(&server_key);

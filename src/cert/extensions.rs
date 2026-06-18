@@ -267,9 +267,7 @@ impl ToAndFromX509Extension for AuthorityKeyIdentifier {
             .as_ref()
             .and_then(|names| {
                 names.iter().find_map(|name| match name {
-                    GeneralName::DirectoryName(dn) => {
-                        Some(DistinguishedName::from_x509_name(dn))
-                    }
+                    GeneralName::DirectoryName(dn) => Some(DistinguishedName::from_x509_name(dn)),
                     _ => None,
                 })
             })
