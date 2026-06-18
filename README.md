@@ -49,6 +49,21 @@ certkit = { version = "0.1", default-features = false, features = ["p256", "p384
 
 At least one algorithm feature must be enabled; building with none is a compile error.
 
+## Examples
+
+[`tests/tls_echo.rs`](tests/tls_echo.rs) is a complete, runnable example that exercises the full PKI workflow:
+
+1. Generate a **root CA** (self-signed)
+2. Issue an **intermediate CA** signed by the root
+3. Issue **server** and **client** end-entity certificates from the intermediate
+4. Stand up an **mTLS echo server** with `rustls` and verify a successful round-trip
+
+Run it with:
+
+```sh
+cargo test mtls_echo
+```
+
 ## Key formats
 
 | Standard | Supported | Notes |
