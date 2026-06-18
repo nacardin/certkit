@@ -16,8 +16,8 @@ use crate::key::PublicKey;
 /// * `serial_number` - The unique identifier for the certificate.
 /// * `signature_algorithm` - The algorithm used to sign the certificate.
 /// * `issuer` - The distinguished name of the certificate issuer.
-/// * `not_before` - The start of the certificate's validity period.
-/// * `not_after` - The end of the certificate's validity period.
+/// * `not_before` - The start of the certificate's validity period (pre-encoded).
+/// * `not_after` - The end of the certificate's validity period (pre-encoded).
 /// * `subject` - The distinguished name of the certificate subject.
 /// * `subject_public_key` - The public key of the certificate subject.
 /// * `extensions` - Additional X.509 extensions for the certificate.
@@ -29,9 +29,9 @@ pub struct TbsCertificate {
     /// Certificate issuer distinguished name
     pub issuer: DistinguishedName,
     /// Start of the certificate's validity period
-    pub not_before: time::OffsetDateTime,
+    pub not_before: x509_cert::time::Time,
     /// End of the certificate's validity period
-    pub not_after: time::OffsetDateTime,
+    pub not_after: x509_cert::time::Time,
     /// Certificate subject distinguished name
     pub subject: DistinguishedName,
     /// Subject's public key
@@ -67,28 +67,22 @@ impl TbsCertificate {
         subject_public_key: PublicKey,
         signature_algorithm: SignatureAlgorithm,
         extensions: Vec<ExtensionParam>,
-    ) -> Self {
-        let not_before = time::OffsetDateTime::now_utc();
-        let not_after = not_before + time::Duration::days(365);
+    ) -> Result<Self, CertKitError> {
+        let validity = crate::cert::params::Validity::for_days(365)?;
 
-        Self {
+        Ok(Self {
             serial_number: random_serial(),
             signature_algorithm,
             issuer,
-            not_before,
-            not_after,
+            not_before: validity.not_before,
+            not_after: validity.not_after,
             subject,
             subject_public_key,
             extensions,
-        }
+        })
     }
 
     /// Converts the `TbsCertificate` into a `TbsCertificateInner` for DER encoding.
-    ///
-    /// # Errors
-    /// Returns `CertKitError::EncodingError` if the validity timestamps fall
-    /// outside the UtcTime range (1950–2049). For dates beyond 2049, use
-    /// GeneralizedTime encoding instead.
     pub fn to_tbs_certificate_inner(&self) -> Result<TbsCertificateInner, CertKitError> {
         // Convert to x509_cert's format
         let algorithm_id: x509_cert::spki::AlgorithmIdentifierOwned =
@@ -106,26 +100,9 @@ impl TbsCertificate {
             })
             .collect::<Vec<_>>();
 
-        // Create validity — UtcTime only covers 1950–2049; dates outside that
-        // range are a real operational concern for long-lived CA certificates.
-        let not_before = x509_cert::time::Time::UtcTime(
-            der::asn1::UtcTime::from_system_time(self.not_before.into()).map_err(|e| {
-                CertKitError::EncodingError(format!(
-                    "not_before timestamp out of UtcTime range (1950-2049): {e}"
-                ))
-            })?,
-        );
-        let not_after = x509_cert::time::Time::UtcTime(
-            der::asn1::UtcTime::from_system_time(self.not_after.into()).map_err(|e| {
-                CertKitError::EncodingError(format!(
-                    "not_after timestamp out of UtcTime range (1950-2049): {e}"
-                ))
-            })?,
-        );
-
         let validity = x509_cert::time::Validity {
-            not_before,
-            not_after,
+            not_before: self.not_before,
+            not_after: self.not_after,
         };
 
         // Create SerialNumber
@@ -174,20 +151,10 @@ impl TbsCertificate {
             })
             .collect::<Vec<_>>();
 
-        // Get timestamps from validity
-        let not_before = match inner.validity.not_before {
-            x509_cert::time::Time::UtcTime(ut) => time::OffsetDateTime::from(ut.to_system_time()),
-            x509_cert::time::Time::GeneralTime(gt) => {
-                time::OffsetDateTime::from(gt.to_system_time())
-            }
-        };
-
-        let not_after = match inner.validity.not_after {
-            x509_cert::time::Time::UtcTime(ut) => time::OffsetDateTime::from(ut.to_system_time()),
-            x509_cert::time::Time::GeneralTime(gt) => {
-                time::OffsetDateTime::from(gt.to_system_time())
-            }
-        };
+        // Get timestamps from validity — store the x509_cert::time::Time
+        // directly rather than converting back to OffsetDateTime.
+        let not_before = inner.validity.not_before;
+        let not_after = inner.validity.not_after;
 
         // Determine signature algorithm based on OID
         let signature_algorithm = match inner.signature.oid {

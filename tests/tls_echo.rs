@@ -16,9 +16,7 @@ use rustls::server::WebPkiClientVerifier;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
 
 use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName};
-use certkit::cert::params::{
-    CertificateParams, DistinguishedName, ExtensionParam, Validity,
-};
+use certkit::cert::params::{CertificateParams, DistinguishedName, ExtensionParam, Validity};
 use certkit::cert::{Certificate, CertificateWithPrivateKey};
 use certkit::issuer::Issuer;
 use certkit::key::{KeyPair, PublicKey};
@@ -53,7 +51,7 @@ fn generate_intermediate(
         .subject_public_key(PublicKey::from_key_pair(&key))
         .is_ca(true)
         .build();
-    let cert = parent.issue(&info, Validity::for_days(1)).unwrap();
+    let cert = parent.issue(&info, Validity::for_days(1).unwrap()).unwrap();
     CertificateWithPrivateKey::new(cert, key)
 }
 
@@ -79,7 +77,7 @@ fn issue_end_entity(
         .usages(vec![usage])
         .extensions(vec![ExtensionParam::from_extension(san, false).unwrap()])
         .build();
-    let cert = issuer.issue(&info, Validity::for_days(1)).unwrap();
+    let cert = issuer.issue(&info, Validity::for_days(1).unwrap()).unwrap();
     (cert, key)
 }
 

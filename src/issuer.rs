@@ -77,7 +77,7 @@ use crate::tbs_certificate::TbsCertificate;
 ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&end_entity_key))
 ///     .build();
 ///
-/// let validity = Validity::for_days(90);
+/// let validity = Validity::for_days(90)?;
 /// let issued_cert = ca_issuer.issue(&end_entity_info, validity)?;
 ///
 /// println!("Certificate issued successfully");
@@ -208,7 +208,7 @@ pub trait Issuer {
     ///     .subject(end_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&end_key)).build();
     ///
     /// // Issue the certificate
-    /// let validity = Validity::for_days(365);
+    /// let validity = Validity::for_days(365)?;
     /// let issued_cert = ca_issuer.issue(&cert_request, validity)?;
     /// println!("Certificate issued with {} extensions",
     ///          issued_cert.params()?.extensions.len());
@@ -443,14 +443,17 @@ mod tests {
         let int = root_ca
             .issue(
                 &request("Intermediate CA", &int_key, true),
-                Validity::for_days(365),
+                Validity::for_days(365).unwrap(),
             )
             .unwrap();
         let int_ca = CertificateWithPrivateKey::new(int, int_key);
 
         let leaf_key = KeyPair::generate_ecdsa_p256();
         let leaf = int_ca
-            .issue(&request("leaf", &leaf_key, false), Validity::for_days(365))
+            .issue(
+                &request("leaf", &leaf_key, false),
+                Validity::for_days(365).unwrap(),
+            )
             .unwrap();
 
         let root_ski = extension::<SubjectKeyIdentifier>(root_ca.cert()).expect("root SKI");

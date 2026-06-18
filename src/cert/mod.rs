@@ -675,10 +675,7 @@ impl Certificate {
             key,
         };
 
-        let validity = params::Validity {
-            not_before,
-            not_after,
-        };
+        let validity = params::Validity::new(not_before, not_after)?;
 
         self_issuer.issue(cert_info, validity)
     }
@@ -778,7 +775,7 @@ impl Issuer for SelfIssuer<'_> {
 ///     .build();
 ///
 /// // Issue the server certificate using the CA
-/// let validity = Validity::for_days(365);
+/// let validity = Validity::for_days(365)?;
 /// let server_cert = ca_with_key.issue(&server_cert_info, validity)?;
 ///
 /// println!("Server certificate issued by CA");

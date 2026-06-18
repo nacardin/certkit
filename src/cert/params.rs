@@ -2,12 +2,13 @@ use bon::Builder;
 use const_oid::ObjectIdentifier;
 use time::Duration;
 use time::OffsetDateTime;
+
+use crate::error::CertKitError;
 use x509_cert::name::RdnSequence;
 
 use super::extensions::ToAndFromX509Extension;
 pub use crate::cert::extensions::ExtendedKeyUsage;
 pub use crate::cert::extensions::ExtendedKeyUsageOption;
-use crate::error::CertKitError;
 use crate::key::PublicKey;
 
 // use super::extensions::{Extension};
@@ -160,30 +161,66 @@ impl DistinguishedName {
 /// Certificate validity period.
 ///
 /// This struct represents the `notBefore` and `notAfter` fields in a certificate.
+/// Times are pre-encoded as [`x509_cert::time::Time`] per **RFC 5280 §4.1.2.5**:
+/// dates through 2049 use `UTCTime`, dates from 2050 onward use `GeneralizedTime`.
 ///
 /// # Fields
 /// * `not_before` - The start of the validity period.
 /// * `not_after` - The end of the validity period.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Validity {
-    pub not_before: OffsetDateTime,
-    pub not_after: OffsetDateTime,
+    pub not_before: x509_cert::time::Time,
+    pub not_after: x509_cert::time::Time,
+}
+
+/// Encodes an [`OffsetDateTime`] as the correct X.509 `Time` variant per
+/// RFC 5280 §4.1.2.5: `UTCTime` for years 1970–2049, `GeneralizedTime` for 2050+.
+fn encode_x509_time(dt: OffsetDateTime) -> Result<x509_cert::time::Time, CertKitError> {
+    let sys_time: std::time::SystemTime = dt.into();
+    // Try UTCTime first (covers 1970–2049 per the `der` crate's UtcTime bounds)
+    match der::asn1::UtcTime::from_system_time(sys_time) {
+        Ok(ut) => Ok(x509_cert::time::Time::UtcTime(ut)),
+        Err(_) => {
+            // Outside UTCTime range → use GeneralizedTime (4-digit year)
+            let gt = der::asn1::GeneralizedTime::from_system_time(sys_time).map_err(|e| {
+                CertKitError::EncodingError(format!("timestamp out of GeneralizedTime range: {e}"))
+            })?;
+            Ok(x509_cert::time::Time::GeneralTime(gt))
+        }
+    }
 }
 
 impl Validity {
+    /// Creates a validity period from explicit [`OffsetDateTime`] bounds.
+    ///
+    /// The timestamps are encoded per RFC 5280 §4.1.2.5 (UTCTime through
+    /// 2049, GeneralizedTime from 2050 onward).
+    ///
+    /// # Errors
+    /// Returns [`CertKitError::EncodingError`] if either timestamp cannot be
+    /// represented as an ASN.1 time value.
+    pub fn new(
+        not_before: OffsetDateTime,
+        not_after: OffsetDateTime,
+    ) -> Result<Self, CertKitError> {
+        Ok(Self {
+            not_before: encode_x509_time(not_before)?,
+            not_after: encode_x509_time(not_after)?,
+        })
+    }
+
     /// Creates a validity period starting now for the given number of days.
     ///
     /// # Arguments
     /// * `days` - The number of days for the validity period.
     ///
-    /// # Returns
-    /// A `Validity` object.
-    pub fn for_days(days: i64) -> Self {
+    /// # Errors
+    /// Returns [`CertKitError::EncodingError`] if the resulting timestamps
+    /// cannot be represented as ASN.1 time values (practically infallible
+    /// for real-world dates).
+    pub fn for_days(days: i64) -> Result<Self, CertKitError> {
         let now = OffsetDateTime::now_utc();
-        Self {
-            not_before: now,
-            not_after: now + Duration::days(days),
-        }
+        Self::new(now, now + Duration::days(days))
     }
 }
 

@@ -101,7 +101,7 @@
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&server_key))
 //!     .build();
 //!
-//! let validity = Validity::for_days(365);
+//! let validity = Validity::for_days(365)?;
 //! let server_cert = ca_with_key.issue(&server_cert_info, validity)?;
 //!
 //! println!("Server certificate issued successfully!");

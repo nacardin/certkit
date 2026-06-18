@@ -207,4 +207,3 @@ impl From<rsa::pkcs1::Error> for CertKitError {
 
 /// A convenience alias for `std::result::Result<T, CertKitError>`.
 pub type Result<T> = std::result::Result<T, CertKitError>;
-

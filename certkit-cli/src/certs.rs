@@ -15,11 +15,7 @@ use crate::Result;
 use crate::args::{CertOptArgs, DnArgs};
 
 /// Builds the certification request info from the DN, key, and options.
-pub fn cert_info(
-    dn: &DnArgs,
-    key: &KeyPair,
-    opts: &CertOptArgs,
-) -> Result<CertificateParams> {
+pub fn cert_info(dn: &DnArgs, key: &KeyPair, opts: &CertOptArgs) -> Result<CertificateParams> {
     let subject = DistinguishedName::builder()
         .common_name(dn.common_name.clone())
         .maybe_country(dn.country.clone())
