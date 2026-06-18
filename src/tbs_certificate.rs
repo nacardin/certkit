@@ -40,48 +40,7 @@ pub struct TbsCertificate {
     pub extensions: Vec<ExtensionParam>,
 }
 
-/// Generates an RFC 5280-compliant random serial number (20 bytes, positive, non-zero).
-fn random_serial() -> Vec<u8> {
-    use rand_core::RngCore;
-    let mut buf = [0u8; 20];
-    rand_core::OsRng.fill_bytes(&mut buf);
-    // Ensure leading bit is 0 so the DER INTEGER is positive.
-    buf[0] &= 0x7F;
-    // Ensure non-zero.
-    buf[19] |= 0x01;
-    buf.to_vec()
-}
-
 impl TbsCertificate {
-    /// Creates a new `TbsCertificate` with default values.
-    ///
-    /// # Arguments
-    /// * `issuer` - The distinguished name of the certificate issuer.
-    /// * `subject` - The distinguished name of the certificate subject.
-    /// * `subject_public_key` - The public key of the certificate subject.
-    /// * `signature_algorithm` - The algorithm used to sign the certificate.
-    /// * `extensions` - Additional X.509 extensions for the certificate.
-    pub fn new(
-        issuer: DistinguishedName,
-        subject: DistinguishedName,
-        subject_public_key: PublicKey,
-        signature_algorithm: SignatureAlgorithm,
-        extensions: Vec<ExtensionParam>,
-    ) -> Result<Self, CertKitError> {
-        let validity = crate::cert::params::Validity::for_days(365)?;
-
-        Ok(Self {
-            serial_number: random_serial(),
-            signature_algorithm,
-            issuer,
-            not_before: validity.not_before,
-            not_after: validity.not_after,
-            subject,
-            subject_public_key,
-            extensions,
-        })
-    }
-
     /// Converts the `TbsCertificate` into a `TbsCertificateInner` for DER encoding.
     pub fn to_tbs_certificate_inner(&self) -> Result<TbsCertificateInner, CertKitError> {
         // Convert to x509_cert's format

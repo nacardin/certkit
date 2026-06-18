@@ -189,16 +189,15 @@ impl DistinguishedName {
 /// Certificate validity period.
 ///
 /// This struct represents the `notBefore` and `notAfter` fields in a certificate.
-/// Times are pre-encoded as [`x509_cert::time::Time`] per **RFC 5280 §4.1.2.5**:
-/// dates through 2049 use `UTCTime`, dates from 2050 onward use `GeneralizedTime`.
-///
-/// # Fields
-/// * `not_before` - The start of the validity period.
-/// * `not_after` - The end of the validity period.
+/// The bounds are pre-encoded as [`x509_cert::time::Time`] per **RFC 5280 §4.1.2.5**
+/// (dates through 2049 use `UTCTime`, dates from 2050 onward use `GeneralizedTime`),
+/// so a `Validity` can only be built through [`Validity::new`] / [`Validity::for_days`]
+/// and always holds a correctly-encoded time. Read the bounds back with
+/// [`not_before`](Self::not_before) and [`not_after`](Self::not_after).
 #[derive(Copy, Clone, Debug)]
 pub struct Validity {
-    pub not_before: x509_cert::time::Time,
-    pub not_after: x509_cert::time::Time,
+    not_before: x509_cert::time::Time,
+    not_after: x509_cert::time::Time,
 }
 
 /// Encodes an [`OffsetDateTime`] as the correct X.509 `Time` variant per
@@ -249,6 +248,18 @@ impl Validity {
     pub fn for_days(days: i64) -> Result<Self, CertKitError> {
         let now = OffsetDateTime::now_utc();
         Self::new(now, now + Duration::days(days))
+    }
+
+    /// Returns the start of the validity period, as a pre-encoded
+    /// [`x509_cert::time::Time`].
+    pub fn not_before(&self) -> x509_cert::time::Time {
+        self.not_before
+    }
+
+    /// Returns the end of the validity period, as a pre-encoded
+    /// [`x509_cert::time::Time`].
+    pub fn not_after(&self) -> x509_cert::time::Time {
+        self.not_after
     }
 
     /// Returns the total duration of the validity period.

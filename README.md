@@ -21,12 +21,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-certkit = "0.1"
+certkit = "0.2"
 ```
-
-## CLI
-
-[`certkit-cli`](certkit-cli/) is a CLI that installs a `certkit` binary for generating keys and certificates. See its [README](certkit-cli/README.md) for usage.
 
 ## Cargo features
 
@@ -44,7 +40,7 @@ To pull in only the algorithms you need, disable the defaults and opt back in. F
 
 ```toml
 [dependencies]
-certkit = { version = "0.1", default-features = false, features = ["p256", "p384"] }
+certkit = { version = "0.2", default-features = false, features = ["p256", "p384"] }
 ```
 
 At least one algorithm feature must be enabled; building with none is a compile error.
