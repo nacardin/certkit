@@ -131,6 +131,18 @@ impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
     }
 }
 
+impl std::fmt::Display for SignatureAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sha256WithRSA => write!(f, "SHA-256 with RSA"),
+            Self::Sha256WithECDSA => write!(f, "SHA-256 with ECDSA"),
+            Self::Sha384WithECDSA => write!(f, "SHA-384 with ECDSA"),
+            Self::Sha512WithECDSA => write!(f, "SHA-512 with ECDSA"),
+            Self::Ed25519 => write!(f, "Ed25519"),
+        }
+    }
+}
+
 /// Represents an X.509 certificate.
 ///
 /// This struct encapsulates a complete X.509 certificate and provides methods
@@ -349,6 +361,49 @@ impl Certificate {
         self.inner
             .to_pem(pkcs8::LineEnding::LF)
             .map_err(|e| CertKitError::EncodingError(e.to_string()))
+    }
+
+    /// Computes the SHA-256 fingerprint of the DER-encoded certificate.
+    ///
+    /// The fingerprint is the SHA-256 hash of the entire DER-encoded
+    /// certificate, which is the universally accepted way to uniquely
+    /// identify a certificate. This matches the output of
+    /// `openssl x509 -fingerprint -sha256`.
+    ///
+    /// # Returns
+    /// A 32-byte array containing the SHA-256 digest.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::EncodingError` if the certificate cannot
+    /// be DER-encoded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::{
+    ///     key::KeyPair,
+    ///     cert::{Certificate, params::{CertificateParams, DistinguishedName}},
+    /// };
+    ///
+    /// let key = KeyPair::generate_ecdsa_p256();
+    /// let subject = DistinguishedName::builder()
+    ///     .common_name("test".to_string())
+    ///     .build();
+    /// let params = CertificateParams::builder()
+    ///     .subject(subject)
+    ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key))
+    ///     .build();
+    /// let cert = Certificate::new_self_signed(&params, &key).unwrap();
+    ///
+    /// let fp = cert.fingerprint().unwrap();
+    /// println!("SHA-256 fingerprint: {:02X?}", fp);
+    /// assert_eq!(fp.len(), 32);
+    /// ```
+    pub fn fingerprint(&self) -> Result<[u8; 32]> {
+        use sha2::Digest;
+        let der = self.to_der()?;
+        let hash = sha2::Sha256::digest(&der);
+        Ok(hash.into())
     }
 
     /// Extracts certificate information into a `CertificateParams` object.

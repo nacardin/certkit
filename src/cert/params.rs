@@ -222,6 +222,44 @@ impl Validity {
         let now = OffsetDateTime::now_utc();
         Self::new(now, now + Duration::days(days))
     }
+
+    /// Returns the total duration of the validity period.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::cert::params::Validity;
+    ///
+    /// let v = Validity::for_days(365).unwrap();
+    /// let d = v.duration();
+    /// // Approximately 365 days in seconds
+    /// assert!(d.as_secs() > 364 * 86400);
+    /// ```
+    pub fn duration(&self) -> std::time::Duration {
+        let nb: std::time::SystemTime = self.not_before.to_system_time();
+        let na: std::time::SystemTime = self.not_after.to_system_time();
+        na.duration_since(nb).unwrap_or_default()
+    }
+
+    /// Returns the time remaining until the certificate expires, relative to now.
+    ///
+    /// Returns `None` if the certificate has already expired (i.e. `not_after`
+    /// is in the past).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::cert::params::Validity;
+    ///
+    /// let v = Validity::for_days(30).unwrap();
+    /// if let Some(remaining) = v.remaining() {
+    ///     println!("Expires in {} days", remaining.as_secs() / 86400);
+    /// }
+    /// ```
+    pub fn remaining(&self) -> Option<std::time::Duration> {
+        let na: std::time::SystemTime = self.not_after.to_system_time();
+        na.duration_since(std::time::SystemTime::now()).ok()
+    }
 }
 
 /// Represents an X.509 extension.

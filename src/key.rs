@@ -1,5 +1,46 @@
 use crate::error::{CertKitError, Result};
 use der::pem::LineEnding;
+use std::fmt;
+
+/// Identifies the cryptographic algorithm of a key pair.
+///
+/// Returned by [`KeyPair::key_type`] and [`PublicKey::key_type`] so callers
+/// can inspect the algorithm without pattern-matching on the full enum.
+///
+/// # Examples
+///
+/// ```rust
+/// use certkit::key::{KeyPair, KeyType};
+///
+/// let key = KeyPair::generate_ecdsa_p256();
+/// assert_eq!(key.key_type(), KeyType::EcdsaP256);
+/// println!("Key algorithm: {}", key.key_type());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyType {
+    /// RSA key.
+    Rsa,
+    /// ECDSA key on the NIST P-256 curve.
+    EcdsaP256,
+    /// ECDSA key on the NIST P-384 curve.
+    EcdsaP384,
+    /// ECDSA key on the NIST P-521 curve.
+    EcdsaP521,
+    /// Ed25519 key.
+    Ed25519,
+}
+
+impl fmt::Display for KeyType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rsa => write!(f, "RSA"),
+            Self::EcdsaP256 => write!(f, "ECDSA P-256"),
+            Self::EcdsaP384 => write!(f, "ECDSA P-384"),
+            Self::EcdsaP521 => write!(f, "ECDSA P-521"),
+            Self::Ed25519 => write!(f, "Ed25519"),
+        }
+    }
+}
 
 #[cfg(feature = "ed25519")]
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
@@ -462,6 +503,85 @@ impl KeyPair {
         Ok(key.as_str().to_string())
     }
 
+    /// Encodes the private key in PKCS#8 DER format.
+    ///
+    /// Returns the raw binary DER encoding of the private key. This is the
+    /// counterpart to [`encode_private_key_pem`](Self::encode_private_key_pem)
+    /// and is useful when a compact binary representation is needed.
+    ///
+    /// # Returns
+    /// A `Result` containing the DER-encoded private key bytes, or a `CertKitError` on failure.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::EncodingError` if the key cannot be encoded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::key::KeyPair;
+    ///
+    /// let key = KeyPair::generate_ecdsa_p256();
+    /// let der_bytes = key.encode_private_key_der().unwrap();
+    /// println!("Private key DER: {} bytes", der_bytes.len());
+    ///
+    /// // Round-trip: the DER can be re-imported
+    /// let restored = KeyPair::import_from_der(&der_bytes).unwrap();
+    /// ```
+    pub fn encode_private_key_der(&self) -> Result<Vec<u8>> {
+        let doc = (match &self {
+            #[cfg(feature = "rsa")]
+            KeyPair::Rsa { private, .. } => private.to_pkcs8_der(),
+            #[cfg(feature = "p256")]
+            KeyPair::EcdsaP256 { signing_key, .. } => {
+                EncodePrivateKey::to_pkcs8_der(signing_key)
+            }
+            #[cfg(feature = "p384")]
+            KeyPair::EcdsaP384 { signing_key, .. } => {
+                EncodePrivateKey::to_pkcs8_der(signing_key)
+            }
+            #[cfg(feature = "p521")]
+            KeyPair::EcdsaP521 { secret_key, .. } => {
+                EncodePrivateKey::to_pkcs8_der(secret_key)
+            }
+            #[cfg(feature = "ed25519")]
+            KeyPair::Ed25519 { signing_key, .. } => {
+                EncodePrivateKey::to_pkcs8_der(signing_key)
+            }
+        })
+        .map_err(|e| e.to_string())
+        .map_err(CertKitError::EncodingError)?;
+
+        Ok(doc.as_bytes().to_vec())
+    }
+
+    /// Returns the [`KeyType`] of this key pair.
+    ///
+    /// This is a lightweight accessor that lets callers discover the
+    /// algorithm without matching on the full `KeyPair` enum.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::key::{KeyPair, KeyType};
+    ///
+    /// let key = KeyPair::generate_ecdsa_p384();
+    /// assert_eq!(key.key_type(), KeyType::EcdsaP384);
+    /// ```
+    pub fn key_type(&self) -> KeyType {
+        match self {
+            #[cfg(feature = "rsa")]
+            KeyPair::Rsa { .. } => KeyType::Rsa,
+            #[cfg(feature = "p256")]
+            KeyPair::EcdsaP256 { .. } => KeyType::EcdsaP256,
+            #[cfg(feature = "p384")]
+            KeyPair::EcdsaP384 { .. } => KeyType::EcdsaP384,
+            #[cfg(feature = "p521")]
+            KeyPair::EcdsaP521 { .. } => KeyType::EcdsaP521,
+            #[cfg(feature = "ed25519")]
+            KeyPair::Ed25519 { .. } => KeyType::Ed25519,
+        }
+    }
+
     /// Imports a key pair from DER-encoded data.
     ///
     /// Attempts to decode DER-encoded private key data and create a `KeyPair`.
@@ -777,6 +897,26 @@ impl KeyPair {
                 let signature = signing_key.sign(data);
                 Ok(signature.to_bytes().to_vec())
             }
+        }
+    }
+}
+
+impl fmt::Display for KeyPair {
+    /// Formats the key pair as a human-readable string describing the algorithm.
+    ///
+    /// This never exposes private key material.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            #[cfg(feature = "rsa")]
+            Self::Rsa { public, .. } => write!(f, "RSA-{}", public.n().bits()),
+            #[cfg(feature = "p256")]
+            Self::EcdsaP256 { .. } => write!(f, "ECDSA P-256"),
+            #[cfg(feature = "p384")]
+            Self::EcdsaP384 { .. } => write!(f, "ECDSA P-384"),
+            #[cfg(feature = "p521")]
+            Self::EcdsaP521 { .. } => write!(f, "ECDSA P-521"),
+            #[cfg(feature = "ed25519")]
+            Self::Ed25519 { .. } => write!(f, "Ed25519"),
         }
     }
 }
@@ -1132,6 +1272,32 @@ impl PublicKey {
                 "Unsupported algorithm: {}",
                 spki.algorithm.oid
             ))),
+        }
+    }
+
+    /// Returns the [`KeyType`] of this public key.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::key::{KeyPair, PublicKey, KeyType};
+    ///
+    /// let kp = KeyPair::generate_ed25519();
+    /// let pk = PublicKey::from_key_pair(&kp);
+    /// assert_eq!(pk.key_type(), KeyType::Ed25519);
+    /// ```
+    pub fn key_type(&self) -> KeyType {
+        match self {
+            #[cfg(feature = "rsa")]
+            PublicKey::Rsa(_) => KeyType::Rsa,
+            #[cfg(feature = "p256")]
+            PublicKey::EcdsaP256(_) => KeyType::EcdsaP256,
+            #[cfg(feature = "p384")]
+            PublicKey::EcdsaP384(_) => KeyType::EcdsaP384,
+            #[cfg(feature = "p521")]
+            PublicKey::EcdsaP521(_) => KeyType::EcdsaP521,
+            #[cfg(feature = "ed25519")]
+            PublicKey::Ed25519(_) => KeyType::Ed25519,
         }
     }
 }
