@@ -14,10 +14,13 @@ use x509_cert::ext::pkix::name::GeneralName;
 /// ```
 /// use certkit::cert::extensions::SubjectAltName;
 /// use crate::certkit::cert::extensions::ToAndFromX509Extension;
-/// let san = SubjectAltName { names: vec!["example.com".to_string()] };
+/// let san = SubjectAltName {
+///     dns_names: vec!["example.com".to_string()],
+///     ..Default::default()
+/// };
 /// let encoded = san.to_x509_extension_value().unwrap();
 /// let decoded = SubjectAltName::from_x509_extension_value(&encoded).unwrap();
-/// assert_eq!(san.names, decoded.names);
+/// assert_eq!(san.dns_names, decoded.dns_names);
 /// ```
 pub trait ToAndFromX509Extension {
     /// The Object Identifier (OID) for the extension.
@@ -34,46 +37,93 @@ pub trait ToAndFromX509Extension {
 
 /// Represents the Subject Alternative Name (SAN) extension.
 ///
-/// This extension specifies additional identities for the subject of the certificate.
+/// This extension specifies additional identities for the subject of the
+/// certificate. Each identity is carried as the correct `GeneralName` kind:
+/// DNS names as `dNSName`, IP addresses as `iPAddress` (4 or 16 octets), and
+/// email addresses as `rfc822Name`. Encoding an IP as a DNS name (as an earlier
+/// version did) is rejected by TLS verifiers, so the kinds are kept distinct.
 ///
 /// # Fields
-/// * `names` - A list of DNS names.
-#[derive(Debug, Clone)]
+/// * `dns_names` - DNS names (`dNSName`).
+/// * `ip_addresses` - IP addresses (`iPAddress`).
+/// * `email_addresses` - RFC 822 email addresses (`rfc822Name`).
+#[derive(Debug, Clone, Default)]
 pub struct SubjectAltName {
-    pub names: Vec<String>,
+    pub dns_names: Vec<String>,
+    pub ip_addresses: Vec<std::net::IpAddr>,
+    pub email_addresses: Vec<String>,
 }
 
 impl ToAndFromX509Extension for SubjectAltName {
     const OID: ObjectIdentifier = x509_cert::ext::pkix::SubjectAltName::OID;
 
     fn to_x509_extension_value(&self) -> Result<Vec<u8>, CertKitError> {
-        let san = x509_cert::ext::pkix::SubjectAltName(
-            self.names
-                .iter()
-                .map(|name| {
-                    Ia5String::try_from(name.clone())
-                        .map(GeneralName::DnsName)
-                        .map_err(|e| CertKitError::InvalidInput(e.to_string()))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
+        let mut names: Vec<GeneralName> = Vec::new();
 
+        for dns in &self.dns_names {
+            let ia5 = Ia5String::try_from(dns.clone())
+                .map_err(|e| CertKitError::InvalidInput(format!("invalid DNS SAN '{dns}': {e}")))?;
+            names.push(GeneralName::DnsName(ia5));
+        }
+
+        for ip in &self.ip_addresses {
+            let octets: Vec<u8> = match ip {
+                std::net::IpAddr::V4(v4) => v4.octets().to_vec(),
+                std::net::IpAddr::V6(v6) => v6.octets().to_vec(),
+            };
+            let os = OctetString::new(octets)
+                .map_err(|e| CertKitError::EncodingError(format!("invalid IP SAN: {e}")))?;
+            names.push(GeneralName::IpAddress(os));
+        }
+
+        for email in &self.email_addresses {
+            let ia5 = Ia5String::try_from(email.clone()).map_err(|e| {
+                CertKitError::InvalidInput(format!("invalid email SAN '{email}': {e}"))
+            })?;
+            names.push(GeneralName::Rfc822Name(ia5));
+        }
+
+        let san = x509_cert::ext::pkix::SubjectAltName(names);
         Ok(san.to_der()?)
     }
 
     fn from_x509_extension_value(extension: &[u8]) -> Result<Self, CertKitError> {
         let san = x509_cert::ext::pkix::SubjectAltName::from_der(extension)?;
-        let names = san
-            .0
-            .iter()
-            .map(|name| match name {
-                GeneralName::DnsName(dns) => Ok(dns.to_string()),
-                _ => Err(CertKitError::InvalidInput(
-                    "Unsupported general name type".to_string(),
-                )),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { names })
+        let mut out = SubjectAltName::default();
+
+        for name in san.0.iter() {
+            match name {
+                GeneralName::DnsName(dns) => out.dns_names.push(dns.as_str().to_string()),
+                GeneralName::Rfc822Name(email) => {
+                    out.email_addresses.push(email.as_str().to_string())
+                }
+                GeneralName::IpAddress(os) => {
+                    let bytes = os.as_bytes();
+                    let ip = match bytes.len() {
+                        4 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                            bytes[0], bytes[1], bytes[2], bytes[3],
+                        )),
+                        16 => {
+                            let mut octets = [0u8; 16];
+                            octets.copy_from_slice(bytes);
+                            std::net::IpAddr::V6(std::net::Ipv6Addr::from(octets))
+                        }
+                        n => {
+                            return Err(CertKitError::DecodingError(format!(
+                                "invalid IP address length in SAN: {n} bytes"
+                            )));
+                        }
+                    };
+                    out.ip_addresses.push(ip);
+                }
+                // Other GeneralName kinds (URI, directoryName, ...) are not
+                // modelled here; skip them so parsing a real-world certificate
+                // never fails on an unrecognised name type.
+                _ => {}
+            }
+        }
+
+        Ok(out)
     }
 }
 
@@ -83,11 +133,14 @@ impl ToAndFromX509Extension for SubjectAltName {
 ///
 /// # Fields
 /// * `is_ca` - Indicates if the certificate is a CA.
-/// * `max_path_length` - The maximum number of intermediate CAs allowed.
+/// * `max_path_length` - The maximum number of intermediate CAs allowed below
+///   this one. `None` means unconstrained. The `pathLenConstraint` field is a
+///   small non-negative integer (X.509 caps it well within a `u8`), so this is
+///   stored as `Option<u8>` rather than a wider type that would truncate.
 #[derive(Default)]
 pub struct BasicConstraints {
     pub is_ca: bool,
-    pub max_path_length: Option<u32>,
+    pub max_path_length: Option<u8>,
 }
 
 impl ToAndFromX509Extension for BasicConstraints {
@@ -96,7 +149,7 @@ impl ToAndFromX509Extension for BasicConstraints {
     fn to_x509_extension_value(&self) -> Result<Vec<u8>, CertKitError> {
         let bc = x509_cert::ext::pkix::BasicConstraints {
             ca: self.is_ca,
-            path_len_constraint: self.max_path_length.map(|v| v as u8),
+            path_len_constraint: self.max_path_length,
         };
 
         Ok(bc.to_der()?)
@@ -106,7 +159,7 @@ impl ToAndFromX509Extension for BasicConstraints {
         let bc = x509_cert::ext::pkix::BasicConstraints::from_der(der_bytes)?;
         Ok(Self {
             is_ca: bc.ca,
-            max_path_length: bc.path_len_constraint.map(|v| v as u32),
+            max_path_length: bc.path_len_constraint,
         })
     }
 }
@@ -239,10 +292,10 @@ impl ToAndFromX509Extension for AuthorityKeyIdentifier {
     const OID: ObjectIdentifier = x509_cert::ext::pkix::AuthorityKeyIdentifier::OID;
 
     fn to_x509_extension_value(&self) -> Result<Vec<u8>, CertKitError> {
-        let authority_cert_issuer = self
-            .authority_cert_issuer
-            .as_ref()
-            .map(|dn| vec![GeneralName::DirectoryName(dn.as_x509_name())]);
+        let authority_cert_issuer = match self.authority_cert_issuer.as_ref() {
+            Some(dn) => Some(vec![GeneralName::DirectoryName(dn.as_x509_name()?)]),
+            None => None,
+        };
 
         let authority_cert_serial_number = self
             .authority_cert_serial_number
@@ -322,6 +375,26 @@ impl ToAndFromX509Extension for SubjectKeyIdentifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subject_alt_name_round_trips_dns_ip_and_email() {
+        // Each identity must encode as its proper GeneralName kind and decode
+        // back into the matching field (DNS as dNSName, IP as iPAddress, email
+        // as rfc822Name) — an IP must NOT be smuggled into a DNS name.
+        let original = SubjectAltName {
+            dns_names: vec!["example.com".to_string(), "www.example.com".to_string()],
+            ip_addresses: vec![
+                "127.0.0.1".parse().unwrap(),
+                "2001:db8::1".parse().unwrap(),
+            ],
+            email_addresses: vec!["admin@example.com".to_string()],
+        };
+        let encoded = original.to_x509_extension_value().unwrap();
+        let decoded = SubjectAltName::from_x509_extension_value(&encoded).unwrap();
+        assert_eq!(original.dns_names, decoded.dns_names);
+        assert_eq!(original.ip_addresses, decoded.ip_addresses);
+        assert_eq!(original.email_addresses, decoded.email_addresses);
+    }
 
     #[test]
     fn test_basic_constraints_encoding_decoding() {

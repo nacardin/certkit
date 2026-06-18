@@ -65,7 +65,8 @@ fn issue_end_entity(
 ) -> (Certificate, KeyPair) {
     let key = gen_key();
     let san = SubjectAltName {
-        names: san_dns.iter().map(|s| s.to_string()).collect(),
+        dns_names: san_dns.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
     };
     let info = CertificateParams::builder()
         .subject(

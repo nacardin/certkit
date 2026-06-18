@@ -20,11 +20,20 @@
 //! ## Key Features
 //!
 //! - **Pure Rust**: Built entirely with rustcrypto libraries
-//! - **Certificate Chain Management**: Create and validate certificate hierarchies
+//! - **Certificate Chain Building**: Create multi-level certificate hierarchies
 //! - **Self-Signed Certificates**: Generate root CA certificates
 //! - **Intermediate CAs**: Support for multi-level certificate authorities
 //! - **X.509 Extensions**: Comprehensive support for standard extensions
 //! - **Format Flexibility**: Import/export in both PEM and DER formats
+//!
+//! ## Scope
+//!
+//! CertKit *builds* and *parses* certificates and keys. It does **not** verify
+//! signatures or perform certificate-path/chain validation — pair it with a
+//! verifier such as [`rustls`]/[`webpki`] when you need to validate a chain.
+//!
+//! [`rustls`]: https://docs.rs/rustls
+//! [`webpki`]: https://docs.rs/webpki
 //!
 //! ## Quick Start
 //!
@@ -126,7 +135,8 @@
 //!
 //! // Create Subject Alternative Name extension
 //! let san = SubjectAltName {
-//!     names: vec!["example.com".to_string(), "www.example.com".to_string()],
+//!     dns_names: vec!["example.com".to_string(), "www.example.com".to_string()],
+//!     ..Default::default()
 //! };
 //!
 //! // Create Extended Key Usage extension

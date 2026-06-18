@@ -493,25 +493,21 @@ impl Certificate {
             .next()
             .unwrap_or_default();
 
-        let is_ca = extensions
+        let basic_constraints = extensions
             .iter()
-            .filter_map(|ext| {
-                if ext.oid == crate::cert::extensions::BasicConstraints::OID {
-                    let basic_constraints: crate::cert::extensions::BasicConstraints =
-                        ext.to_extension().unwrap_or_default();
-                    Some(basic_constraints.is_ca)
-                } else {
-                    None
-                }
+            .find(|ext| ext.oid == crate::cert::extensions::BasicConstraints::OID)
+            .map(|ext| {
+                ext.to_extension::<crate::cert::extensions::BasicConstraints>()
+                    .unwrap_or_default()
             })
-            .next()
-            .unwrap_or(false);
+            .unwrap_or_default();
 
         Ok(CertificateParams {
             subject: subject.clone(),
             subject_public_key,
             usages,
-            is_ca,
+            is_ca: basic_constraints.is_ca,
+            max_path_length: basic_constraints.max_path_length,
             extensions,
         })
     }
@@ -524,7 +520,7 @@ impl Certificate {
     ///
     /// # Certificate Properties
     /// - **Validity**: 365 days from creation time
-    /// - **Serial Number**: Fixed value of 1
+    /// - **Serial Number**: 20-byte CSPRNG value (RFC 5280 §4.1.2.2 compliant)
     /// - **Version**: X.509 v3
     /// - **Signature Algorithm**: Automatically selected based on key type
     ///
@@ -585,7 +581,9 @@ impl Certificate {
     ///
     /// // Create Subject Alternative Name extension
     /// let san = SubjectAltName {
-    ///     names: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+    ///     dns_names: vec!["localhost".to_string()],
+    ///     ip_addresses: vec!["127.0.0.1".parse().unwrap()],
+    ///     ..Default::default()
     /// };
     ///
     /// let subject = DistinguishedName::builder()
@@ -621,7 +619,7 @@ impl Certificate {
     /// or for testing purposes.
     ///
     /// # Certificate Properties
-    /// - **Serial Number**: Fixed value of 1
+    /// - **Serial Number**: 20-byte CSPRNG value (RFC 5280 §4.1.2.2 compliant)
     /// - **Version**: X.509 v3
     /// - **Signature Algorithm**: Automatically selected based on key type
     ///
@@ -686,7 +684,9 @@ impl Certificate {
     ///
     /// // Create Subject Alternative Name extension
     /// let san = SubjectAltName {
-    ///     names: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+    ///     dns_names: vec!["localhost".to_string()],
+    ///     ip_addresses: vec!["127.0.0.1".parse().unwrap()],
+    ///     ..Default::default()
     /// };
     ///
     /// let subject = DistinguishedName::builder()

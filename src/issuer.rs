@@ -271,7 +271,13 @@ pub trait Issuer {
 
         let basic_constraints = BasicConstraints {
             is_ca: cert_request.is_ca,
-            max_path_length: None,
+            // pathLenConstraint is only meaningful for a CA certificate that
+            // asserts keyCertSign; leave it unset for end-entity certificates.
+            max_path_length: if cert_request.is_ca {
+                cert_request.max_path_length
+            } else {
+                None
+            },
         };
 
         let mut extensions: Vec<ExtensionParam> = vec![
@@ -294,8 +300,10 @@ pub trait Issuer {
                 | ExtendedKeyUsageOption::EmailProtection => {
                     // TLS 1.3 with ECDSA/Ed25519 requires DigitalSignature.
                     // KeyEncipherment is only needed for RSA key transport
-                    // (TLS ≤1.2), so set it conditionally.
+                    // (TLS ≤1.2), so set it conditionally. The RSA check is
+                    // feature-gated so non-RSA builds still compile.
                     key_usage_flags |= KeyUsages::DigitalSignature;
+                    #[cfg(feature = "rsa")]
                     if matches!(
                         cert_request.subject_public_key,
                         crate::key::PublicKey::Rsa(_)
@@ -331,8 +339,19 @@ pub trait Issuer {
             .collect();
         log::trace!("certificate has {} extension(s)", combined_extensions.len());
 
+        // RFC 5280 §4.1.2.2: the serial number is a positive integer of at most
+        // 20 octets. Validate any (possibly overridden) serial before use so a
+        // bad override is a clear error rather than a panic deeper down.
+        let serial_number = self.serial_number();
+        if serial_number.is_empty() || serial_number.len() > 20 {
+            return Err(crate::error::CertKitError::InvalidInput(format!(
+                "serial number must be 1..=20 octets, got {}",
+                serial_number.len()
+            )));
+        }
+
         let tbs_cert = TbsCertificate {
-            serial_number: self.serial_number(),
+            serial_number,
             signature_algorithm: signature_algo.clone(),
             issuer: issuer_dn,
             not_before: validity.not_before,

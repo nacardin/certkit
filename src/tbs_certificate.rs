@@ -92,22 +92,27 @@ impl TbsCertificate {
         let extensions = self
             .extensions
             .iter()
-            .map(|ext| x509_cert::ext::Extension {
-                extn_id: ext.oid,
-                critical: ext.critical,
-                extn_value: OctetString::new(ext.value.clone())
-                    .expect("extension value bytes are always valid for OctetString"),
+            .map(|ext| {
+                Ok(x509_cert::ext::Extension {
+                    extn_id: ext.oid,
+                    critical: ext.critical,
+                    extn_value: OctetString::new(ext.value.clone()).map_err(|e| {
+                        CertKitError::EncodingError(format!("extension value: {e}"))
+                    })?,
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, CertKitError>>()?;
 
         let validity = x509_cert::time::Validity {
             not_before: self.not_before,
             not_after: self.not_after,
         };
 
-        // Create SerialNumber
+        // Create SerialNumber. The default issuer produces a valid 20-byte
+        // value, but a custom `Issuer::serial_number()` override could return
+        // something out of range, so surface that as an error rather than panic.
         let serial_number = SerialNumber::new(self.serial_number.as_slice())
-            .expect("serial number bytes from CSPRNG or caller are always valid");
+            .map_err(|e| CertKitError::InvalidInput(format!("invalid serial number: {e}")))?;
 
         // Convert the subject public key to SPKI format
         let subject_public_key_info = self.subject_public_key.as_spki();
@@ -116,9 +121,9 @@ impl TbsCertificate {
             version: Version::V3,
             serial_number,
             signature: algorithm_id,
-            issuer: self.issuer.as_x509_name(),
+            issuer: self.issuer.as_x509_name()?,
             validity,
-            subject: self.subject.as_x509_name(),
+            subject: self.subject.as_x509_name()?,
             subject_public_key_info,
             issuer_unique_id: None,
             subject_unique_id: None,

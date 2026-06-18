@@ -1,10 +1,12 @@
 use bon::Builder;
+use const_oid::db::rfc4519;
 use const_oid::ObjectIdentifier;
 use time::Duration;
 use time::OffsetDateTime;
 
 use crate::error::CertKitError;
-use x509_cert::name::RdnSequence;
+use x509_cert::attr::AttributeTypeAndValue;
+use x509_cert::name::{RdnSequence, RelativeDistinguishedName};
 
 use super::extensions::ToAndFromX509Extension;
 pub use crate::cert::extensions::ExtendedKeyUsage;
@@ -22,6 +24,9 @@ use crate::key::PublicKey;
 /// * `subject_public_key` - The public key of the certificate subject.
 /// * `usages` - A list of extended key usage options.
 /// * `is_ca` - Indicates if the certificate is a CA.
+/// * `max_path_length` - For a CA, the maximum number of intermediate CAs that
+///   may appear below it (the Basic Constraints `pathLenConstraint`). `None`
+///   leaves the path length unconstrained. Ignored when `is_ca` is `false`.
 /// * `extensions` - Additional X.509 extensions.
 #[derive(Clone, Debug, Builder)]
 pub struct CertificateParams {
@@ -31,6 +36,7 @@ pub struct CertificateParams {
     pub usages: Vec<ExtendedKeyUsageOption>,
     #[builder(default)]
     pub is_ca: bool,
+    pub max_path_length: Option<u8>,
     #[builder(default)]
     pub extensions: Vec<ExtensionParam>,
 }
@@ -56,37 +62,61 @@ pub struct DistinguishedName {
     pub organization_unit: Option<String>,
 }
 
+
+
+/// Builds a single-attribute RDN carrying `value` as a DER `UTF8String`.
+///
+/// The value is placed in the attribute structurally, so RFC 4514 metacharacters
+/// in it are never interpreted — see [`DistinguishedName::as_x509_name`].
+fn dn_rdn(oid: ObjectIdentifier, value: &str) -> Result<RelativeDistinguishedName, CertKitError> {
+    let any = der::Any::new(der::Tag::Utf8String, value.as_bytes())
+        .map_err(|e| CertKitError::EncodingError(format!("DN attribute value: {e}")))?;
+    let atv = AttributeTypeAndValue { oid, value: any };
+    let set = der::asn1::SetOfVec::try_from(vec![atv])
+        .map_err(|e| CertKitError::EncodingError(format!("DN attribute set: {e}")))?;
+    Ok(RelativeDistinguishedName(set))
+}
+
 impl DistinguishedName {
     /// Converts the distinguished name to an X.509-compatible format.
     ///
-    /// # Returns
-    /// An `x509_cert::name::DistinguishedName` object.
-    pub fn as_x509_name(&self) -> x509_cert::name::DistinguishedName {
-        use core::str::FromStr;
-
-        // Build the RDN sequence from only the attributes that are actually set,
-        // so we don't emit empty `OU=`/`O=`/`L=`/`ST=`/`C=` attributes for fields
-        // the caller left unset. Attribute ordering is preserved.
-        let mut rdns = vec![format!("CN={}", self.common_name)];
+    /// The RDN sequence is built structurally: each attribute value is placed in
+    /// the certificate verbatim as a `UTF8String`. This is deliberately *not* done
+    /// by formatting the fields into an RFC 4514 string and re-parsing — that
+    /// would let metacharacters (`,`, `+`, `=`, `"`, `\`, `<`, `>`, `;`, a leading
+    /// `#`/space, ...) either corrupt the DN (RDN injection — e.g. a common name
+    /// of `a,O=Evil` forging an Organization) or fail to parse and panic.
+    ///
+    /// Only attributes that are actually set are emitted. They are encoded in
+    /// conventional most-significant-first order (C, ST, L, O, OU, CN), which
+    /// RFC 4514 renders in reverse as `CN=...,...,C=...`.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::EncodingError` only if an attribute value cannot be
+    /// encoded as a DER `UTF8String` (in practice, never for a Rust `&str`).
+    pub fn as_x509_name(&self) -> Result<x509_cert::name::DistinguishedName, CertKitError> {
+        let mut rdns: Vec<RelativeDistinguishedName> = Vec::new();
 
         let optional_attrs = [
-            ("OU", &self.organization_unit),
-            ("O", &self.organization),
-            ("L", &self.locality),
-            ("ST", &self.state),
-            ("C", &self.country),
+            (rfc4519::C, &self.country),
+            (rfc4519::ST, &self.state),
+            (rfc4519::L, &self.locality),
+            (rfc4519::O, &self.organization),
+            (rfc4519::OU, &self.organization_unit),
         ];
 
-        for (key, value) in optional_attrs {
-            match value {
-                Some(value) if !value.is_empty() => rdns.push(format!("{key}={value}")),
-                _ => {}
+        for (oid, value) in optional_attrs {
+            if let Some(value) = value {
+                if !value.is_empty() {
+                    rdns.push(dn_rdn(oid, value)?);
+                }
             }
         }
 
-        let rfc4514_name = rdns.join(",");
-        RdnSequence::from_str(&rfc4514_name)
-            .expect("RDN sequence built from validated fields is always valid")
+        // Common Name is the most specific attribute → encoded last.
+        rdns.push(dn_rdn(rfc4519::CN, &self.common_name)?);
+
+        Ok(RdnSequence(rdns))
     }
 
     /// Creates a `DistinguishedName` from an X.509-compatible format.
@@ -112,7 +142,6 @@ impl DistinguishedName {
 
         for rdn in x509dn.0.iter() {
             for attr in rdn.0.iter() {
-                let oid_str = attr.oid.to_string();
                 // DN attributes may be encoded as Utf8String, PrintableString,
                 // or other ASN.1 string types depending on the issuer and
                 // attribute (e.g. Country is typically PrintableString per X.520).
@@ -132,16 +161,17 @@ impl DistinguishedName {
                     })
                     .map_err(|_| {
                         CertKitError::DecodingError(format!(
-                            "DN attribute {oid_str} value cannot be decoded as a string"
+                            "DN attribute {} value cannot be decoded as a string",
+                            attr.oid
                         ))
                     })?;
-                match oid_str.as_str() {
-                    "2.5.4.3" => common_name = value,
-                    "2.5.4.11" => organization_unit = Some(value),
-                    "2.5.4.10" => organization = Some(value),
-                    "2.5.4.7" => locality = Some(value),
-                    "2.5.4.8" => state = Some(value),
-                    "2.5.4.6" => country = Some(value),
+                match attr.oid {
+                    oid if oid == rfc4519::CN => common_name = value,
+                    oid if oid == rfc4519::OU => organization_unit = Some(value),
+                    oid if oid == rfc4519::O => organization = Some(value),
+                    oid if oid == rfc4519::L => locality = Some(value),
+                    oid if oid == rfc4519::ST => state = Some(value),
+                    oid if oid == rfc4519::C => country = Some(value),
                     _ => { /* skip unknown attributes */ }
                 }
             }
@@ -312,8 +342,7 @@ impl ExtensionParam {
 mod tests {
     use super::*;
 
-    /// Object identifier for the Common Name (CN) attribute.
-    const CN_OID: &str = "2.5.4.3";
+
 
     #[test]
     fn common_name_only_produces_single_rdn() {
@@ -322,14 +351,14 @@ mod tests {
             ..Default::default()
         };
 
-        let x509_name = dn.as_x509_name();
+        let x509_name = dn.as_x509_name().unwrap();
 
         // Exactly one RDN holding exactly one attribute (the CN) — no empty
         // OU/O/L/ST/C attributes for the fields the caller left unset.
         assert_eq!(x509_name.0.len(), 1, "expected a single RDN");
         let attrs: Vec<_> = x509_name.0.iter().flat_map(|rdn| rdn.0.iter()).collect();
         assert_eq!(attrs.len(), 1, "expected a single attribute");
-        assert_eq!(attrs[0].oid.to_string(), CN_OID);
+        assert_eq!(attrs[0].oid, rfc4519::CN);
         assert_eq!(x509_name.to_string(), "CN=leaf.example.com");
 
         // And it round-trips back to the original common name with no other fields.
@@ -351,7 +380,7 @@ mod tests {
             ..Default::default()
         };
 
-        let x509_name = dn.as_x509_name();
+        let x509_name = dn.as_x509_name().unwrap();
 
         // Two RDNs were skipped (OU, L, ST were unset) leaving CN, O, C in order.
         assert_eq!(
@@ -370,7 +399,31 @@ mod tests {
         };
 
         // An explicitly empty `OU` is treated the same as `None` and dropped.
-        let x509_name = dn.as_x509_name();
+        let x509_name = dn.as_x509_name().unwrap();
         assert_eq!(x509_name.to_string(), "CN=leaf.example.com,C=US");
+    }
+
+    #[test]
+    fn metacharacters_in_values_do_not_panic_or_inject() {
+        // A value containing RFC 4514 metacharacters used to either panic (when
+        // the formatted string failed to parse) or silently inject extra RDNs.
+        // It must now produce exactly one CN attribute carrying the literal value.
+        let dn = DistinguishedName {
+            common_name: "Acme, Inc.+O=Evil".to_string(),
+            ..Default::default()
+        };
+
+        let x509_name = dn.as_x509_name().unwrap();
+
+        // Exactly one RDN, one attribute (the CN) — no injected O/other RDNs.
+        assert_eq!(x509_name.0.len(), 1, "expected a single RDN");
+        let attrs: Vec<_> = x509_name.0.iter().flat_map(|rdn| rdn.0.iter()).collect();
+        assert_eq!(attrs.len(), 1, "expected a single attribute");
+        assert_eq!(attrs[0].oid, rfc4519::CN);
+
+        // The literal value survives a round-trip unchanged.
+        let round_tripped = DistinguishedName::from_x509_name(&x509_name).unwrap();
+        assert_eq!(round_tripped.common_name, "Acme, Inc.+O=Evil");
+        assert!(round_tripped.organization.is_none());
     }
 }
