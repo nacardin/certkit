@@ -112,7 +112,7 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
 
     let keygen = &gen_key;
 
-    // ── 1. Build the PKI chain ──────────────────────────────────────────
+    // 1. Build the PKI chain
     let root_ca = generate_ca(keygen);
     let intermediate_ca = generate_intermediate(&root_ca, keygen);
 
@@ -131,7 +131,7 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
         ExtendedKeyUsageOption::ClientAuth,
     );
 
-    // ── 2. Prepare DER materials for rustls ─────────────────────────────
+    // 2. Prepare DER materials for rustls
     let root_cert_der = cert_der(root_ca.cert());
     let intermediate_cert_der = cert_der(intermediate_ca.cert());
     let server_chain = vec![cert_der(&server_cert), intermediate_cert_der.clone()];
@@ -139,7 +139,7 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
     let server_key_der = key_der(&server_key);
     let client_key_der = key_der(&client_key);
 
-    // ── 3. Configure rustls server (mTLS) ───────────────────────────────
+    // 3. Configure rustls server (mTLS)
     let mut root_store = RootCertStore::empty();
     root_store.add(root_cert_der).expect("add root CA");
 
@@ -154,7 +154,7 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
             .expect("build server config"),
     );
 
-    // ── 4. Configure rustls client ──────────────────────────────────────
+    // 4. Configure rustls client
     let client_config = Arc::new(
         ClientConfig::builder()
             .with_root_certificates(root_store)
@@ -162,11 +162,11 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
             .expect("build client config"),
     );
 
-    // ── 5. Bind TCP listener ────────────────────────────────────────────
+    // 5. Bind TCP listener
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local addr");
 
-    // ── 6. Spawn server thread ──────────────────────────────────────────
+    // 6. Spawn server thread
     let server_cfg = server_config.clone();
     let server_handle = thread::spawn(move || {
         let (stream, _) = listener.accept().expect("accept");
@@ -180,7 +180,7 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
         tls.conn.write_tls(&mut tls.sock).ok();
     });
 
-    // ── 7. Client: connect, send, receive, assert ───────────────────────
+    // 7. Client: connect, send, receive, assert
     let stream = TcpStream::connect(addr).expect("connect");
     let server_name = ServerName::try_from("localhost").expect("server name");
     let conn = ClientConnection::new(client_config, server_name).expect("client conn");
@@ -202,8 +202,8 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
     server_handle.join().expect("server thread panicked");
 }
 
-// ── Per-algorithm test variants ─────────────────────────────────────────
-// P-521 is excluded: rustls/webpki does not support ECDSA-P521 verification.
+// Per-algorithm test variants
+// rustls/webpki does not support ECDSA-P521 verification.
 
 #[cfg(feature = "p256")]
 #[test]
