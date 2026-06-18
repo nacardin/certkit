@@ -1,6 +1,6 @@
 use bon::Builder;
-use const_oid::db::rfc4519;
 use const_oid::ObjectIdentifier;
+use const_oid::db::rfc4519;
 use time::Duration;
 use time::OffsetDateTime;
 
@@ -61,8 +61,6 @@ pub struct DistinguishedName {
     pub organization: Option<String>,
     pub organization_unit: Option<String>,
 }
-
-
 
 /// Builds a single-attribute RDN carrying `value` as a DER `UTF8String`.
 ///
@@ -341,8 +339,6 @@ impl ExtensionParam {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-
 
     #[test]
     fn common_name_only_produces_single_rdn() {

@@ -532,21 +532,13 @@ impl KeyPair {
             #[cfg(feature = "rsa")]
             KeyPair::Rsa { private, .. } => private.to_pkcs8_der(),
             #[cfg(feature = "p256")]
-            KeyPair::EcdsaP256 { signing_key, .. } => {
-                EncodePrivateKey::to_pkcs8_der(signing_key)
-            }
+            KeyPair::EcdsaP256 { signing_key, .. } => EncodePrivateKey::to_pkcs8_der(signing_key),
             #[cfg(feature = "p384")]
-            KeyPair::EcdsaP384 { signing_key, .. } => {
-                EncodePrivateKey::to_pkcs8_der(signing_key)
-            }
+            KeyPair::EcdsaP384 { signing_key, .. } => EncodePrivateKey::to_pkcs8_der(signing_key),
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { secret_key, .. } => {
-                EncodePrivateKey::to_pkcs8_der(secret_key)
-            }
+            KeyPair::EcdsaP521 { secret_key, .. } => EncodePrivateKey::to_pkcs8_der(secret_key),
             #[cfg(feature = "ed25519")]
-            KeyPair::Ed25519 { signing_key, .. } => {
-                EncodePrivateKey::to_pkcs8_der(signing_key)
-            }
+            KeyPair::Ed25519 { signing_key, .. } => EncodePrivateKey::to_pkcs8_der(signing_key),
         })
         .map_err(|e| e.to_string())
         .map_err(CertKitError::EncodingError)?;

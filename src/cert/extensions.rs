@@ -383,10 +383,7 @@ mod tests {
         // as rfc822Name) — an IP must NOT be smuggled into a DNS name.
         let original = SubjectAltName {
             dns_names: vec!["example.com".to_string(), "www.example.com".to_string()],
-            ip_addresses: vec![
-                "127.0.0.1".parse().unwrap(),
-                "2001:db8::1".parse().unwrap(),
-            ],
+            ip_addresses: vec!["127.0.0.1".parse().unwrap(), "2001:db8::1".parse().unwrap()],
             email_addresses: vec!["admin@example.com".to_string()],
         };
         let encoded = original.to_x509_extension_value().unwrap();

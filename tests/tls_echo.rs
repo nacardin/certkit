@@ -1,19 +1,17 @@
 //! End-to-end integration test: builds a full PKI chain with `certkit`, then
 //! stands up a sync rustls echo server (with mTLS) and a rustls client, and
 //! verifies a successful echo round-trip over the encrypted channel.
-//!
-//! Each supported key algorithm gets its own test variant. P-521 is excluded
-//! because rustls/webpki does not support it for certificate verification.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 
-use rustls::StreamOwned;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::server::WebPkiClientVerifier;
-use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
+use rustls::{
+    ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection, StreamOwned,
+};
 
 use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName};
 use certkit::cert::params::{CertificateParams, DistinguishedName, ExtensionParam, Validity};
@@ -21,10 +19,10 @@ use certkit::cert::{Certificate, CertificateWithPrivateKey};
 use certkit::issuer::Issuer;
 use certkit::key::{KeyPair, PublicKey};
 
-/// Generate a self-signed root CA using the provided key generation function.
+/// Generate a self-signed root CA certificate.
 fn generate_ca(gen_key: &dyn Fn() -> KeyPair) -> CertificateWithPrivateKey {
     let key = gen_key();
-    let info = CertificateParams::builder()
+    let params = CertificateParams::builder()
         .subject(
             DistinguishedName::builder()
                 .common_name("Test Root CA".to_string())
@@ -33,16 +31,17 @@ fn generate_ca(gen_key: &dyn Fn() -> KeyPair) -> CertificateWithPrivateKey {
         .subject_public_key(PublicKey::from_key_pair(&key))
         .is_ca(true)
         .build();
-    CertificateWithPrivateKey::new(Certificate::new_self_signed(&info, &key).unwrap(), key)
+    let cert = Certificate::new_self_signed(&params, &key).unwrap();
+    CertificateWithPrivateKey::new(cert, key)
 }
 
-/// Issue an intermediate CA signed by `parent`.
+/// Issue an intermediate CA certificate signed by `parent`.
 fn generate_intermediate(
     parent: &CertificateWithPrivateKey,
     gen_key: &dyn Fn() -> KeyPair,
 ) -> CertificateWithPrivateKey {
     let key = gen_key();
-    let info = CertificateParams::builder()
+    let params = CertificateParams::builder()
         .subject(
             DistinguishedName::builder()
                 .common_name("Test Intermediate CA".to_string())
@@ -51,7 +50,9 @@ fn generate_intermediate(
         .subject_public_key(PublicKey::from_key_pair(&key))
         .is_ca(true)
         .build();
-    let cert = parent.issue(&info, Validity::for_days(1).unwrap()).unwrap();
+    let cert = parent
+        .issue(&params, Validity::for_days(1).unwrap())
+        .unwrap();
     CertificateWithPrivateKey::new(cert, key)
 }
 
@@ -62,13 +63,13 @@ fn issue_end_entity(
     cn: &str,
     san_dns: &[&str],
     usage: ExtendedKeyUsageOption,
-) -> (Certificate, KeyPair) {
+) -> CertificateWithPrivateKey {
     let key = gen_key();
     let san = SubjectAltName {
         dns_names: san_dns.iter().map(|s| s.to_string()).collect(),
         ..Default::default()
     };
-    let info = CertificateParams::builder()
+    let params = CertificateParams::builder()
         .subject(
             DistinguishedName::builder()
                 .common_name(cn.to_string())
@@ -78,27 +79,10 @@ fn issue_end_entity(
         .usages(vec![usage])
         .extensions(vec![ExtensionParam::from_extension(san, false).unwrap()])
         .build();
-    let cert = issuer.issue(&info, Validity::for_days(1).unwrap()).unwrap();
-    (cert, key)
-}
-
-/// Parse a PEM certificate into a `CertificateDer`.
-fn cert_der(cert: &Certificate) -> CertificateDer<'static> {
-    let pem = cert.to_pem().expect("cert to_pem");
-    let mut reader = pem.as_bytes();
-    rustls_pemfile::certs(&mut reader)
-        .next()
-        .expect("no cert in PEM")
-        .expect("bad cert PEM")
-}
-
-/// Parse a PKCS#8 PEM private key into a `PrivateKeyDer`.
-fn key_der(key: &KeyPair) -> PrivateKeyDer<'static> {
-    let pem = key.encode_private_key_pem().expect("key to pem");
-    let mut reader = pem.as_bytes();
-    rustls_pemfile::private_key(&mut reader)
-        .expect("bad key PEM")
-        .expect("no key in PEM")
+    let cert = issuer
+        .issue(&params, Validity::for_days(1).unwrap())
+        .unwrap();
+    CertificateWithPrivateKey::new(cert, key)
 }
 
 /// Core mTLS echo test parameterised by key generation function.
@@ -116,14 +100,14 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
     let root_ca = generate_ca(keygen);
     let intermediate_ca = generate_intermediate(&root_ca, keygen);
 
-    let (server_cert, server_key) = issue_end_entity(
+    let server = issue_end_entity(
         &intermediate_ca,
         keygen,
         "localhost",
         &["localhost"],
         ExtendedKeyUsageOption::ServerAuth,
     );
-    let (client_cert, client_key) = issue_end_entity(
+    let client = issue_end_entity(
         &intermediate_ca,
         keygen,
         "client.local",
@@ -132,16 +116,22 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
     );
 
     // 2. Prepare DER materials for rustls
-    let root_cert_der = cert_der(root_ca.cert());
-    let intermediate_cert_der = cert_der(intermediate_ca.cert());
-    let server_chain = vec![cert_der(&server_cert), intermediate_cert_der.clone()];
-    let client_chain = vec![cert_der(&client_cert), intermediate_cert_der];
-    let server_key_der = key_der(&server_key);
-    let client_key_der = key_der(&client_key);
+    let root_der = CertificateDer::from(root_ca.cert().to_der().unwrap());
+    let int_der = CertificateDer::from(intermediate_ca.cert().to_der().unwrap());
+    let server_der = CertificateDer::from(server.cert().to_der().unwrap());
+    let client_der = CertificateDer::from(client.cert().to_der().unwrap());
+
+    let server_chain = vec![server_der, int_der.clone()];
+    let client_chain = vec![client_der, int_der];
+
+    let server_key =
+        PrivateKeyDer::try_from(server.key().encode_private_key_der().unwrap()).unwrap();
+    let client_key =
+        PrivateKeyDer::try_from(client.key().encode_private_key_der().unwrap()).unwrap();
 
     // 3. Configure rustls server (mTLS)
     let mut root_store = RootCertStore::empty();
-    root_store.add(root_cert_der).expect("add root CA");
+    root_store.add(root_der).expect("add root CA");
 
     let client_verifier = WebPkiClientVerifier::builder(Arc::new(root_store.clone()))
         .build()
@@ -150,7 +140,7 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
     let server_config = Arc::new(
         ServerConfig::builder()
             .with_client_cert_verifier(client_verifier)
-            .with_single_cert(server_chain, server_key_der)
+            .with_single_cert(server_chain, server_key)
             .expect("build server config"),
     );
 
@@ -158,7 +148,7 @@ fn run_mtls_echo(gen_key: impl Fn() -> KeyPair) {
     let client_config = Arc::new(
         ClientConfig::builder()
             .with_root_certificates(root_store)
-            .with_client_auth_cert(client_chain, client_key_der)
+            .with_client_auth_cert(client_chain, client_key)
             .expect("build client config"),
     );
 
