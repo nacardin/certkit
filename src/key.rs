@@ -1,9 +1,39 @@
-use crate::error::CertKitError;
-use der::pem::LineEnding;
-pub type Result<T> = std::result::Result<T, CertKitError>;
+//! Key generation, import/export, and cryptographic signing.
 
-#[cfg(feature = "p521")]
-use ecdsa::VerifyingKey;
+use std::fmt;
+
+use der::pem::LineEnding;
+use pkcs8::{EncodePrivateKey, PrivateKeyInfo};
+
+use crate::error::{CertKitError, Result};
+
+/// Identifies the cryptographic algorithm of a key pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyType {
+    /// RSA key.
+    Rsa,
+    /// ECDSA key on the NIST P-256 curve.
+    EcdsaP256,
+    /// ECDSA key on the NIST P-384 curve.
+    EcdsaP384,
+    /// ECDSA key on the NIST P-521 curve.
+    EcdsaP521,
+    /// Ed25519 key.
+    Ed25519,
+}
+
+impl fmt::Display for KeyType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rsa => write!(f, "RSA"),
+            Self::EcdsaP256 => write!(f, "ECDSA P-256"),
+            Self::EcdsaP384 => write!(f, "ECDSA P-384"),
+            Self::EcdsaP521 => write!(f, "ECDSA P-521"),
+            Self::Ed25519 => write!(f, "Ed25519"),
+        }
+    }
+}
+
 #[cfg(feature = "ed25519")]
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
 #[cfg(feature = "ed25519")]
@@ -12,8 +42,6 @@ use ed25519_dalek::VerifyingKey as Ed25519VerifyingKey;
 use p256::ecdsa::{SigningKey as P256SigningKey, VerifyingKey as P256VerifyingKey};
 #[cfg(feature = "p384")]
 use p384::ecdsa::{SigningKey as P384SigningKey, VerifyingKey as P384VerifyingKey};
-#[cfg(feature = "p521")]
-use p521::NistP521;
 #[cfg(feature = "p521")]
 use p521::ecdsa::SigningKey as P521SigningKey;
 #[cfg(feature = "rsa")]
@@ -26,6 +54,7 @@ use rsa::signature::Signer as RsaSigner;
 use rsa::{
     RsaPrivateKey, RsaPublicKey,
     pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPublicKey},
+    traits::PublicKeyParts,
 };
 #[cfg(feature = "rsa")]
 use sha2::Sha256; //only used with RSA keys.
@@ -71,7 +100,7 @@ use sha2::Sha256; //only used with RSA keys.
 /// - ECDSA keys provide equivalent security with smaller key sizes
 /// - Ed25519 provides high security and performance
 /// - Choose the appropriate algorithm based on your security requirements and compatibility needs
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum KeyPair {
     /// RSA key pair.
     ///
@@ -106,12 +135,12 @@ pub enum KeyPair {
     /// ECDSA P-521 key pair.
     ///
     /// # Fields
-    /// * `signing_key` - The signing key.
-    /// * `verifying_key` - The verifying key.
+    /// * `secret_key` - The secret key.
+    /// * `public_key` - The public key.
     #[cfg(feature = "p521")]
     EcdsaP521 {
-        signing_key: ecdsa::SigningKey<NistP521>,
-        verifying_key: ecdsa::VerifyingKey<NistP521>,
+        secret_key: p521::SecretKey,
+        public_key: p521::PublicKey,
     },
     /// Ed25519 key pair.
     ///
@@ -121,7 +150,40 @@ pub enum KeyPair {
     Ed25519 { signing_key: Ed25519SigningKey },
 }
 
-use pkcs8::{EncodePrivateKey, PrivateKeyInfo};
+impl std::fmt::Debug for KeyPair {
+    /// Formats the key pair for debugging **without** exposing private key material.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(feature = "rsa")]
+            Self::Rsa { public, .. } => f
+                .debug_struct("Rsa")
+                .field("bits", &public.n().bits())
+                .finish_non_exhaustive(),
+            #[cfg(feature = "p256")]
+            Self::EcdsaP256 { .. } => f.debug_struct("EcdsaP256").finish_non_exhaustive(),
+            #[cfg(feature = "p384")]
+            Self::EcdsaP384 { .. } => f.debug_struct("EcdsaP384").finish_non_exhaustive(),
+            #[cfg(feature = "p521")]
+            Self::EcdsaP521 { .. } => f.debug_struct("EcdsaP521").finish_non_exhaustive(),
+            #[cfg(feature = "ed25519")]
+            Self::Ed25519 { .. } => f.debug_struct("Ed25519").finish_non_exhaustive(),
+        }
+    }
+}
+
+/// Builds the P-521 ECDSA signing key for a stored secret key.
+///
+/// P-521 ECDSA signs over a SHA-512 prehash, which the `p521` crate implements
+/// only on its `ecdsa::SigningKey` newtype. We store the `elliptic_curve`
+/// `SecretKey`/`PublicKey`. They implement the PKCS#8/SPKI/SEC1 encoders that
+/// the newtypes lack and, unlike the newtypes, derive `Debug`. We recover the
+/// signing key on demand here. The scalar is preserved exactly, so signatures
+/// match the previous `ecdsa::SigningKey<NistP521>` path.
+#[cfg(feature = "p521")]
+fn p521_signing_key(secret_key: &p521::SecretKey) -> P521SigningKey {
+    P521SigningKey::from_bytes(&secret_key.to_bytes())
+        .expect("a stored secret key always holds a valid scalar")
+}
 
 impl KeyPair {
     /// Generate an RSA key pair with the specified number of bits.
@@ -166,6 +228,12 @@ impl KeyPair {
     /// - 4096-bit keys offer maximum security but with performance trade-offs
     #[cfg(feature = "rsa")]
     pub fn generate_rsa(bits: usize) -> Result<Self> {
+        if bits < 2048 {
+            return Err(CertKitError::InvalidInput(format!(
+                "RSA key size {bits} bits is below the minimum of 2048"
+            )));
+        }
+        log::debug!("generating RSA-{bits} key pair");
         let mut rng = rand_core::OsRng;
         let private = RsaPrivateKey::new(&mut rng, bits)?;
         let public = RsaPublicKey::from(&private);
@@ -207,6 +275,7 @@ impl KeyPair {
     /// - Fast signature generation and verification
     #[cfg(feature = "p256")]
     pub fn generate_ecdsa_p256() -> Self {
+        log::debug!("generating ECDSA P-256 key pair");
         let mut rng = rand_core::OsRng;
         let signing_key = P256SigningKey::random(&mut rng);
         let verifying_key = signing_key.verifying_key().to_owned();
@@ -245,6 +314,7 @@ impl KeyPair {
     /// - Slightly larger signatures than P-256
     #[cfg(feature = "p384")]
     pub fn generate_ecdsa_p384() -> Self {
+        log::debug!("generating ECDSA P-384 key pair");
         let mut rng = rand_core::OsRng;
         let signing_key = P384SigningKey::random(&mut rng);
         let verifying_key = signing_key.verifying_key().to_owned();
@@ -283,13 +353,13 @@ impl KeyPair {
     /// - Larger key and signature sizes than P-256/P-384
     #[cfg(feature = "p521")]
     pub fn generate_ecdsa_p521() -> Self {
+        log::debug!("generating ECDSA P-521 key pair");
         let mut rng = rand_core::OsRng;
-        let signing_key: ecdsa::SigningKey<NistP521> =
-            ecdsa::SigningKey::<NistP521>::random(&mut rng);
-        let verifying_key = signing_key.verifying_key().to_owned();
+        let secret_key = p521::SecretKey::random(&mut rng);
+        let public_key = secret_key.public_key();
         KeyPair::EcdsaP521 {
-            signing_key,
-            verifying_key,
+            secret_key,
+            public_key,
         }
     }
 
@@ -326,6 +396,7 @@ impl KeyPair {
     /// - Deterministic signatures (no random nonce required)
     #[cfg(feature = "ed25519")]
     pub fn generate_ed25519() -> Self {
+        log::debug!("generating Ed25519 key pair");
         let mut rng = rand_core::OsRng;
         let signing_key: Ed25519SigningKey = Ed25519SigningKey::generate(&mut rng);
         KeyPair::Ed25519 { signing_key }
@@ -366,13 +437,17 @@ impl KeyPair {
     pub fn get_public_key_der(&self) -> Vec<u8> {
         match self {
             #[cfg(feature = "rsa")]
-            KeyPair::Rsa { public, .. } => public.to_pkcs1_der().unwrap().as_bytes().to_vec(),
+            KeyPair::Rsa { public, .. } => public
+                .to_pkcs1_der()
+                .expect("valid RSA public key always encodes to PKCS#1 DER")
+                .as_bytes()
+                .to_vec(),
             #[cfg(feature = "p256")]
             KeyPair::EcdsaP256 { verifying_key, .. } => verifying_key.to_sec1_bytes().to_vec(),
             #[cfg(feature = "p384")]
             KeyPair::EcdsaP384 { verifying_key, .. } => verifying_key.to_sec1_bytes().to_vec(),
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { verifying_key, .. } => verifying_key.to_sec1_bytes().to_vec(),
+            KeyPair::EcdsaP521 { public_key, .. } => public_key.to_sec1_bytes().to_vec(),
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key } => signing_key.verifying_key().to_bytes().to_vec(),
         }
@@ -404,8 +479,8 @@ impl KeyPair {
                 EncodePrivateKey::to_pkcs8_pem(signing_key, LineEnding::default())
             }
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { signing_key, .. } => {
-                EncodePrivateKey::to_pkcs8_pem(signing_key, LineEnding::default())
+            KeyPair::EcdsaP521 { secret_key, .. } => {
+                EncodePrivateKey::to_pkcs8_pem(secret_key, LineEnding::default())
             }
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key, .. } => {
@@ -416,6 +491,73 @@ impl KeyPair {
         .map_err(CertKitError::EncodingError)?;
 
         Ok(key.as_str().to_string())
+    }
+
+    /// Encodes the private key in PKCS#8 DER format.
+    ///
+    /// # Returns
+    /// A `Result` containing the DER-encoded private key bytes, or a `CertKitError` on failure.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::EncodingError` if the key cannot be encoded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::key::KeyPair;
+    ///
+    /// let key = KeyPair::generate_ecdsa_p256();
+    /// let der_bytes = key.encode_private_key_der().unwrap();
+    /// println!("Private key DER: {} bytes", der_bytes.len());
+    ///
+    /// // Round-trip: the DER can be re-imported
+    /// let restored = KeyPair::import_from_der(&der_bytes).unwrap();
+    /// ```
+    pub fn encode_private_key_der(&self) -> Result<Vec<u8>> {
+        let doc = (match &self {
+            #[cfg(feature = "rsa")]
+            KeyPair::Rsa { private, .. } => private.to_pkcs8_der(),
+            #[cfg(feature = "p256")]
+            KeyPair::EcdsaP256 { signing_key, .. } => EncodePrivateKey::to_pkcs8_der(signing_key),
+            #[cfg(feature = "p384")]
+            KeyPair::EcdsaP384 { signing_key, .. } => EncodePrivateKey::to_pkcs8_der(signing_key),
+            #[cfg(feature = "p521")]
+            KeyPair::EcdsaP521 { secret_key, .. } => EncodePrivateKey::to_pkcs8_der(secret_key),
+            #[cfg(feature = "ed25519")]
+            KeyPair::Ed25519 { signing_key, .. } => EncodePrivateKey::to_pkcs8_der(signing_key),
+        })
+        .map_err(|e| e.to_string())
+        .map_err(CertKitError::EncodingError)?;
+
+        Ok(doc.as_bytes().to_vec())
+    }
+
+    /// Returns the [`KeyType`] of this key pair.
+    ///
+    /// This is a lightweight accessor that lets callers discover the
+    /// algorithm without matching on the full `KeyPair` enum.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::key::{KeyPair, KeyType};
+    ///
+    /// let key = KeyPair::generate_ecdsa_p384();
+    /// assert_eq!(key.key_type(), KeyType::EcdsaP384);
+    /// ```
+    pub fn key_type(&self) -> KeyType {
+        match self {
+            #[cfg(feature = "rsa")]
+            KeyPair::Rsa { .. } => KeyType::Rsa,
+            #[cfg(feature = "p256")]
+            KeyPair::EcdsaP256 { .. } => KeyType::EcdsaP256,
+            #[cfg(feature = "p384")]
+            KeyPair::EcdsaP384 { .. } => KeyType::EcdsaP384,
+            #[cfg(feature = "p521")]
+            KeyPair::EcdsaP521 { .. } => KeyType::EcdsaP521,
+            #[cfg(feature = "ed25519")]
+            KeyPair::Ed25519 { .. } => KeyType::Ed25519,
+        }
     }
 
     /// Imports a key pair from DER-encoded data.
@@ -458,12 +600,11 @@ impl KeyPair {
     /// }
     /// ```
     pub fn import_from_der(der: &[u8]) -> Result<Self> {
+        log::trace!("importing key from {} bytes of DER", der.len());
         // Try RSA PKCS#1 first
         #[cfg(feature = "rsa")]
-        if let (Ok(private), Ok(public)) = (
-            RsaPrivateKey::from_pkcs1_der(der),
-            RsaPublicKey::from_pkcs1_der(der),
-        ) {
+        if let Ok(private) = RsaPrivateKey::from_pkcs1_der(der) {
+            let public = RsaPublicKey::from(&private);
             return Ok(KeyPair::Rsa {
                 private: Box::new(private),
                 public,
@@ -504,11 +645,11 @@ impl KeyPair {
         }
         // Try ECDSA P-521 PKCS#8
         #[cfg(feature = "p521")]
-        if let Ok(signing_key) = ecdsa::SigningKey::<NistP521>::try_from(private_key_info.clone()) {
-            let verifying_key = signing_key.verifying_key().to_owned();
+        if let Ok(secret_key) = p521::SecretKey::try_from(private_key_info.clone()) {
+            let public_key = secret_key.public_key();
             return Ok(KeyPair::EcdsaP521 {
-                signing_key,
-                verifying_key,
+                secret_key,
+                public_key,
             });
         }
 
@@ -566,6 +707,7 @@ impl KeyPair {
     /// - Contain valid base64-encoded DER data
     /// - Represent a supported key type (RSA, ECDSA P-256/P-384/P-521, Ed25519)
     pub fn import_from_pkcs8_pem(pem_str: &str) -> Result<Self> {
+        log::trace!("importing key from PKCS#8 PEM");
         let pemd = pem::parse(pem_str)
             .map_err(|_| CertKitError::DecodingError("Failed to parse PEM".to_string()))?;
 
@@ -613,30 +755,28 @@ impl KeyPair {
         match self {
             #[cfg(feature = "rsa")]
             KeyPair::Rsa { public, .. } => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone()).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone())
+                    .expect("valid RSA key always encodes to SPKI")
             }
             #[cfg(feature = "p256")]
             KeyPair::EcdsaP256 { verifying_key, .. } => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid P-256 key always encodes to SPKI")
             }
             #[cfg(feature = "p384")]
             KeyPair::EcdsaP384 { verifying_key, .. } => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid P-384 key always encodes to SPKI")
             }
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { verifying_key, .. } => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
+            KeyPair::EcdsaP521 { public_key, .. } => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*public_key)
+                    .expect("valid P-521 key always encodes to SPKI")
             }
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key } => {
-                let pk_bytes = signing_key.verifying_key().to_bytes();
-                x509_cert::spki::SubjectPublicKeyInfoOwned {
-                    algorithm: x509_cert::spki::AlgorithmIdentifierOwned {
-                        oid: const_oid::ObjectIdentifier::new_unwrap("1.3.101.112"),
-                        parameters: None,
-                    },
-                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes).unwrap(),
-                }
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(signing_key.verifying_key())
+                    .expect("valid Ed25519 key always encodes to SPKI")
             }
         }
     }
@@ -694,6 +834,7 @@ impl KeyPair {
     /// - Ed25519 signatures are deterministic and consistent
     /// - All algorithms provide strong security when used properly
     pub fn sign_data(&self, data: &[u8]) -> Result<Vec<u8>> {
+        log::trace!("signing {} bytes of data", data.len());
         match self {
             #[cfg(feature = "rsa")]
             KeyPair::Rsa { private, .. } => {
@@ -706,20 +847,20 @@ impl KeyPair {
             KeyPair::EcdsaP256 { signing_key, .. } => {
                 let signature: p256::ecdsa::Signature =
                     p256::ecdsa::signature::Signer::sign(signing_key, data);
-                Ok(signature.to_vec())
+                Ok(signature.to_der().as_bytes().to_vec())
             }
             #[cfg(feature = "p384")]
             KeyPair::EcdsaP384 { signing_key, .. } => {
                 let signature: p384::ecdsa::Signature =
                     p384::ecdsa::signature::Signer::sign(signing_key, data);
-                Ok(signature.to_vec())
+                Ok(signature.to_der().as_bytes().to_vec())
             }
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { signing_key, .. } => {
-                let skey: P521SigningKey = signing_key.clone().into();
+            KeyPair::EcdsaP521 { secret_key, .. } => {
+                let signing_key = p521_signing_key(secret_key);
                 let signature: p521::ecdsa::Signature =
-                    p521::ecdsa::signature::Signer::sign(&skey, data);
-                Ok(signature.to_vec())
+                    p521::ecdsa::signature::Signer::sign(&signing_key, data);
+                Ok(signature.to_der().as_bytes().to_vec())
             }
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key } => {
@@ -727,6 +868,25 @@ impl KeyPair {
                 let signature = signing_key.sign(data);
                 Ok(signature.to_bytes().to_vec())
             }
+        }
+    }
+}
+
+impl fmt::Display for KeyPair {
+    /// Formats the key pair as a human-readable string describing the algorithm
+    /// while never exposing the private key material.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            #[cfg(feature = "rsa")]
+            Self::Rsa { public, .. } => write!(f, "RSA-{}", public.n().bits()),
+            #[cfg(feature = "p256")]
+            Self::EcdsaP256 { .. } => write!(f, "ECDSA P-256"),
+            #[cfg(feature = "p384")]
+            Self::EcdsaP384 { .. } => write!(f, "ECDSA P-384"),
+            #[cfg(feature = "p521")]
+            Self::EcdsaP521 { .. } => write!(f, "ECDSA P-521"),
+            #[cfg(feature = "ed25519")]
+            Self::Ed25519 { .. } => write!(f, "Ed25519"),
         }
     }
 }
@@ -758,8 +918,6 @@ impl KeyPair {
 /// let der_bytes = public_key.to_der()?;
 /// println!("Public key DER size: {} bytes", der_bytes.len());
 ///
-/// // Note: from_der currently only supports RSA keys
-/// // let restored_key = PublicKey::from_der(&der_bytes)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -776,7 +934,7 @@ pub enum PublicKey {
     EcdsaP384(P384VerifyingKey),
     /// ECDSA P-521 public key.
     #[cfg(feature = "p521")]
-    EcdsaP521(VerifyingKey<NistP521>),
+    EcdsaP521(p521::PublicKey),
     /// Ed25519 public key.
     #[cfg(feature = "ed25519")]
     Ed25519(Ed25519VerifyingKey),
@@ -820,29 +978,63 @@ impl PublicKey {
             #[cfg(feature = "p384")]
             PublicKey::EcdsaP384(verifying_key) => Ok(verifying_key.to_sec1_bytes().to_vec()),
             #[cfg(feature = "p521")]
-            PublicKey::EcdsaP521(verifying_key) => Ok(verifying_key.to_sec1_bytes().to_vec()),
+            PublicKey::EcdsaP521(public_key) => Ok(public_key.to_sec1_bytes().to_vec()),
             #[cfg(feature = "ed25519")]
             PublicKey::Ed25519(verifying_key) => Ok(verifying_key.to_bytes().to_vec()),
         }
     }
 
-    /// Creates a public key from DER-encoded data.
+    /// Converts the public key to an X.509 `SubjectPublicKeyInfo`.
     ///
-    /// Attempts to decode DER-encoded public key data. Currently supports
-    /// RSA public keys in PKCS#1 format. Support for other key types may
-    /// be added in future versions.
+    /// Mirrors [`KeyPair::as_spki`] for the public half. Deriving a key
+    /// identifier from this SPKI yields the same value a CA derives from its
+    /// signing key, so a subject key identifier here matches the authority key
+    /// identifier of certificates this key later signs.
+    pub fn as_spki(&self) -> x509_cert::spki::SubjectPublicKeyInfoOwned {
+        match self {
+            #[cfg(feature = "rsa")]
+            PublicKey::Rsa(public) => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone())
+                    .expect("valid RSA key always encodes to SPKI")
+            }
+            #[cfg(feature = "p256")]
+            PublicKey::EcdsaP256(verifying_key) => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid P-256 key always encodes to SPKI")
+            }
+            #[cfg(feature = "p384")]
+            PublicKey::EcdsaP384(verifying_key) => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid P-384 key always encodes to SPKI")
+            }
+            #[cfg(feature = "p521")]
+            PublicKey::EcdsaP521(public_key) => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*public_key)
+                    .expect("valid P-521 key always encodes to SPKI")
+            }
+            #[cfg(feature = "ed25519")]
+            PublicKey::Ed25519(verifying_key) => {
+                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key)
+                    .expect("valid Ed25519 key always encodes to SPKI")
+            }
+        }
+    }
+
+    /// Decodes an RSA public key from PKCS#1 DER-encoded bytes.
+    ///
+    /// This method only supports RSA public keys in PKCS#1 (`RSAPublicKey`)
+    /// format. For other key types, use [`PublicKey::from_key_pair`] or
+    /// [`PublicKey::from_x509spki`].
     ///
     /// # Arguments
-    /// * `der` - A byte slice containing the DER-encoded public key data
+    /// * `der` - A byte slice containing the PKCS#1 DER-encoded RSA public key
     ///
     /// # Returns
     /// A `Result` containing the `PublicKey` on success, or a `CertKitError` on failure.
     ///
     /// # Errors
-    /// Returns `CertKitError::DecodingError` if:
-    /// - The DER data is malformed
-    /// - The key type is not supported
-    /// - The key format is not recognized
+    /// Returns `CertKitError::RsaPkcs1Error` if the DER data is not a valid
+    /// PKCS#1 RSA public key.
     ///
     /// # Examples
     ///
@@ -855,17 +1047,13 @@ impl PublicKey {
     /// let public_key = PublicKey::from_key_pair(&key_pair);
     /// let der_bytes = public_key.to_der()?;
     ///
-    /// // Recreate public key from DER
-    /// let restored_key = PublicKey::from_der(&der_bytes)?;
+    /// // Recreate public key from PKCS#1 DER
+    /// let restored_key = PublicKey::from_rsa_pkcs1_der(&der_bytes)?;
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// # Limitations
-    /// Currently only supports RSA public keys. ECDSA and Ed25519 support
-    /// will be added in future versions.
     #[cfg(feature = "rsa")]
-    pub fn from_der(der: &[u8]) -> Result<Self> {
+    pub fn from_rsa_pkcs1_der(der: &[u8]) -> Result<Self> {
         let public = RsaPublicKey::from_pkcs1_der(der)?;
         Ok(PublicKey::Rsa(public))
     }
@@ -916,7 +1104,7 @@ impl PublicKey {
             #[cfg(feature = "p384")]
             KeyPair::EcdsaP384 { verifying_key, .. } => PublicKey::EcdsaP384(*verifying_key),
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { verifying_key, .. } => PublicKey::EcdsaP521(*verifying_key),
+            KeyPair::EcdsaP521 { public_key, .. } => PublicKey::EcdsaP521(*public_key),
             #[cfg(feature = "ed25519")]
             KeyPair::Ed25519 { signing_key, .. } => PublicKey::Ed25519(signing_key.verifying_key()),
         }
@@ -1015,15 +1203,13 @@ impl PublicKey {
                     }
                     #[cfg(feature = "p521")]
                     const_oid::db::rfc5912::SECP_521_R_1 => {
-                        let verifying_key = ecdsa::VerifyingKey::<NistP521>::from_sec1_bytes(
-                            raw_bytes,
-                        )
-                        .map_err(|_| {
-                            CertKitError::DecodingError(
-                                "Invalid P-521 public key bytes".to_string(),
-                            )
-                        })?;
-                        Ok(PublicKey::EcdsaP521(verifying_key))
+                        let public_key =
+                            p521::PublicKey::from_sec1_bytes(raw_bytes).map_err(|_| {
+                                CertKitError::DecodingError(
+                                    "Invalid P-521 public key bytes".to_string(),
+                                )
+                            })?;
+                        Ok(PublicKey::EcdsaP521(public_key))
                     }
                     _ => Err(CertKitError::DecodingError(format!(
                         "Unsupported EC curve OID: {params_oid}"
@@ -1049,6 +1235,32 @@ impl PublicKey {
             ))),
         }
     }
+
+    /// Returns the [`KeyType`] of this public key.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::key::{KeyPair, PublicKey, KeyType};
+    ///
+    /// let kp = KeyPair::generate_ed25519();
+    /// let pk = PublicKey::from_key_pair(&kp);
+    /// assert_eq!(pk.key_type(), KeyType::Ed25519);
+    /// ```
+    pub fn key_type(&self) -> KeyType {
+        match self {
+            #[cfg(feature = "rsa")]
+            PublicKey::Rsa(_) => KeyType::Rsa,
+            #[cfg(feature = "p256")]
+            PublicKey::EcdsaP256(_) => KeyType::EcdsaP256,
+            #[cfg(feature = "p384")]
+            PublicKey::EcdsaP384(_) => KeyType::EcdsaP384,
+            #[cfg(feature = "p521")]
+            PublicKey::EcdsaP521(_) => KeyType::EcdsaP521,
+            #[cfg(feature = "ed25519")]
+            PublicKey::Ed25519(_) => KeyType::Ed25519,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1058,6 +1270,7 @@ mod test {
     #[test]
     #[cfg(feature = "rsa")]
     fn pem_encode_decode_rsa() {
+        crate::init_test_logger();
         let rsa = KeyPair::generate_rsa(2048).unwrap();
         let rsa_der = rsa::pkcs8::EncodePrivateKey::to_pkcs8_der(match &rsa {
             KeyPair::Rsa { private, .. } => &**private,
@@ -1072,6 +1285,7 @@ mod test {
     #[test]
     #[cfg(feature = "p256")]
     fn pem_encode_decode_ecdsa_p256() {
+        crate::init_test_logger();
         let p256 = KeyPair::generate_ecdsa_p256();
         let p256_der = p256::pkcs8::EncodePrivateKey::to_pkcs8_der(match &p256 {
             KeyPair::EcdsaP256 { signing_key, .. } => signing_key,
@@ -1086,6 +1300,7 @@ mod test {
     #[test]
     #[cfg(feature = "p384")]
     fn pem_encode_decode_ecdsa_p384() {
+        crate::init_test_logger();
         let p384 = KeyPair::generate_ecdsa_p384();
         let p384_der = p384::pkcs8::EncodePrivateKey::to_pkcs8_der(match &p384 {
             KeyPair::EcdsaP384 { signing_key, .. } => signing_key,
@@ -1100,9 +1315,10 @@ mod test {
     #[test]
     #[cfg(feature = "p521")]
     fn pem_encode_decode_ecdsa_p521() {
+        crate::init_test_logger();
         let p521 = KeyPair::generate_ecdsa_p521();
         let p521_der = p521::pkcs8::EncodePrivateKey::to_pkcs8_der(match &p521 {
-            KeyPair::EcdsaP521 { signing_key, .. } => signing_key,
+            KeyPair::EcdsaP521 { secret_key, .. } => secret_key,
             _ => unreachable!(),
         })
         .unwrap();
@@ -1113,8 +1329,8 @@ mod test {
 
     #[test]
     #[cfg(feature = "ed25519")]
-    #[allow(unreachable_patterns)] //Depending on feature combination we may only support ED25519
     fn pem_encode_decode_ed25519() {
+        crate::init_test_logger();
         let ed = KeyPair::generate_ed25519();
         let ed_der = ed25519_dalek::pkcs8::EncodePrivateKey::to_pkcs8_der(match &ed {
             KeyPair::Ed25519 { signing_key } => signing_key,
@@ -1124,5 +1340,51 @@ mod test {
         let ed_pem = pem::encode(&pem::Pem::new("PRIVATE KEY", ed_der.as_bytes()));
         let ed_decoded = KeyPair::import_from_pkcs8_pem(&ed_pem);
         assert!(ed_decoded.is_ok(), "Ed25519 PEM decode should succeed");
+    }
+
+    // X.509 requires ECDSA signatures to be the DER-encoded ECDSA-Sig-Value
+    // SEQUENCE { r, s }. `sign_data` previously emitted the fixed-size r||s
+    // form, which is rejected by `Signature::from_der` and fails verification.
+
+    #[test]
+    #[cfg(feature = "p256")]
+    fn ecdsa_p256_sign_data_is_der_and_verifies() {
+        use p256::ecdsa::signature::Verifier;
+        crate::init_test_logger();
+        let key = KeyPair::generate_ecdsa_p256();
+        let msg = b"certkit ecdsa signature payload";
+        let sig_bytes = key.sign_data(msg).unwrap();
+        let sig = p256::ecdsa::Signature::from_der(&sig_bytes)
+            .expect("ECDSA P-256 signature must be DER-encoded");
+        let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(&key.get_public_key_der()).unwrap();
+        vk.verify(msg, &sig).expect("signature must verify");
+    }
+
+    #[test]
+    #[cfg(feature = "p384")]
+    fn ecdsa_p384_sign_data_is_der_and_verifies() {
+        use p384::ecdsa::signature::Verifier;
+        crate::init_test_logger();
+        let key = KeyPair::generate_ecdsa_p384();
+        let msg = b"certkit ecdsa signature payload";
+        let sig_bytes = key.sign_data(msg).unwrap();
+        let sig = p384::ecdsa::Signature::from_der(&sig_bytes)
+            .expect("ECDSA P-384 signature must be DER-encoded");
+        let vk = p384::ecdsa::VerifyingKey::from_sec1_bytes(&key.get_public_key_der()).unwrap();
+        vk.verify(msg, &sig).expect("signature must verify");
+    }
+
+    #[test]
+    #[cfg(feature = "p521")]
+    fn ecdsa_p521_sign_data_is_der_and_verifies() {
+        use p521::ecdsa::signature::Verifier;
+        crate::init_test_logger();
+        let key = KeyPair::generate_ecdsa_p521();
+        let msg = b"certkit ecdsa signature payload";
+        let sig_bytes = key.sign_data(msg).unwrap();
+        let sig = p521::ecdsa::Signature::from_der(&sig_bytes)
+            .expect("ECDSA P-521 signature must be DER-encoded");
+        let vk = p521::ecdsa::VerifyingKey::from_sec1_bytes(&key.get_public_key_der()).unwrap();
+        vk.verify(msg, &sig).expect("signature must verify");
     }
 }

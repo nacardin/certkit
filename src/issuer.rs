@@ -1,3 +1,5 @@
+//! Certificate issuance and CA operations.
+
 use std::vec;
 
 use der::Encode;
@@ -13,8 +15,9 @@ use crate::cert::extensions::ExtendedKeyUsage;
 use crate::cert::extensions::ExtendedKeyUsageOption;
 use crate::cert::extensions::KeyUsage;
 use crate::cert::extensions::KeyUsages;
+use crate::cert::extensions::SubjectKeyIdentifier;
 use crate::cert::params::Validity;
-use crate::cert::params::{CertificationRequestInfo, DistinguishedName, ExtensionParam};
+use crate::cert::params::{CertificateParams, DistinguishedName, ExtensionParam};
 use crate::key::KeyPair;
 use crate::tbs_certificate::TbsCertificate;
 
@@ -46,7 +49,7 @@ use crate::tbs_certificate::TbsCertificate;
 /// ```rust
 /// use certkit::{
 ///     key::KeyPair,
-///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificationRequestInfo, DistinguishedName, Validity}},
+///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificateParams, DistinguishedName, Validity}},
 ///     issuer::Issuer,
 /// };
 ///
@@ -57,17 +60,14 @@ use crate::tbs_certificate::TbsCertificate;
 ///     .organization("Example Corp".to_string())
 ///     .build();
 ///
-/// let ca_cert_info = CertificationRequestInfo::builder()
+/// let ca_cert_info = CertificateParams::builder()
 ///     .subject(ca_subject)
 ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key))
 ///     .is_ca(true)
 ///     .build();
 ///
-/// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
-/// let ca_issuer = CertificateWithPrivateKey {
-///     cert: ca_cert,
-///     key: ca_key,
-/// };
+/// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
+/// let ca_issuer = CertificateWithPrivateKey::new(ca_cert, ca_key);
 ///
 /// // Issue an end-entity certificate
 /// let end_entity_key = KeyPair::generate_rsa(2048)?;
@@ -75,13 +75,13 @@ use crate::tbs_certificate::TbsCertificate;
 ///     .common_name("client.example.com".to_string())
 ///     .build();
 ///
-/// let end_entity_info = CertificationRequestInfo::builder()
+/// let end_entity_info = CertificateParams::builder()
 ///     .subject(end_entity_subject)
 ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&end_entity_key))
 ///     .build();
 ///
-/// let validity = Validity::for_days(90);
-/// let issued_cert = ca_issuer.issue(&end_entity_info, validity);
+/// let validity = Validity::for_days(90)?;
+/// let issued_cert = ca_issuer.issue(&end_entity_info, validity)?;
 ///
 /// println!("Certificate issued successfully");
 /// # Ok::<(), certkit::error::CertKitError>(())
@@ -93,7 +93,7 @@ use crate::tbs_certificate::TbsCertificate;
 /// use certkit::{
 ///     issuer::Issuer,
 ///     key::KeyPair,
-///     cert::params::{DistinguishedName, CertificationRequestInfo, Validity},
+///     cert::params::{DistinguishedName, CertificateParams, Validity},
 /// };
 ///
 /// struct CustomCA {
@@ -103,18 +103,12 @@ use crate::tbs_certificate::TbsCertificate;
 /// }
 ///
 /// impl Issuer for CustomCA {
-///     fn issuer_name(&self) -> DistinguishedName {
-///         self.name.clone()
+///     fn issuer_name(&self) -> Result<DistinguishedName, certkit::error::CertKitError> {
+///         Ok(self.name.clone())
 ///     }
 ///
 ///     fn signing_key(&self) -> &KeyPair {
 ///         &self.key
-///     }
-///
-///     fn serial_number(&self) -> Vec<u8> {
-///         let serial = self.next_serial.get();
-///         self.next_serial.set(serial + 1);
-///         serial.to_be_bytes().to_vec()
 ///     }
 /// }
 /// ```
@@ -124,9 +118,12 @@ pub trait Issuer {
     /// This name will appear in the "Issuer" field of issued certificates
     /// and should uniquely identify the certificate authority.
     ///
-    /// # Returns
+    /// Returns
     /// A `DistinguishedName` representing the issuer's identity.
-    fn issuer_name(&self) -> DistinguishedName;
+    ///
+    /// # Errors
+    /// A `CertKitError` if the name cannot be extracted.
+    fn issuer_name(&self) -> Result<DistinguishedName, crate::error::CertKitError>;
 
     /// Returns the signing key of the issuer.
     ///
@@ -146,13 +143,24 @@ pub trait Issuer {
     /// This method should return a different value for each certificate issued.
     ///
     /// # Returns
-    /// A byte vector containing the serial number for the next certificate.
+    /// A byte vector containing a CSPRNG-generated serial number that
+    /// conforms to RFC 5280 §4.1.2.2 (positive, non-zero, at most 20 octets).
     ///
-    /// # Implementation Notes
-    /// - Serial numbers should be unique within the CA's scope
-    /// - Consider using incrementing counters or random values
-    /// - Avoid predictable patterns that could aid attacks
-    fn serial_number(&self) -> Vec<u8>;
+    /// # Default Implementation
+    /// Generates 20 random bytes via [`rand_core::OsRng`], clears the leading
+    /// bit (so the DER INTEGER is positive), and sets the trailing bit (so the
+    /// value is never zero). Override this if you need deterministic or
+    /// counter-based serial numbers.
+    fn serial_number(&self) -> Vec<u8> {
+        use rand_core::RngCore;
+        let mut buf = [0u8; 20];
+        rand_core::OsRng.fill_bytes(&mut buf);
+        // Ensure leading bit is 0 so the DER INTEGER is positive.
+        buf[0] &= 0x7F;
+        // Ensure non-zero.
+        buf[19] |= 0x01;
+        buf.to_vec()
+    }
 
     /// Issues a certificate based on the provided certification request information.
     ///
@@ -175,8 +183,9 @@ pub trait Issuer {
     ///
     /// # Extension Processing
     /// The method automatically adds several extensions:
-    /// - **Basic Constraints**: Set to CA=true for the issuer
+    /// - **Basic Constraints**: Set according to the request's `is_ca` flag
     /// - **Authority Key Identifier**: Links to the issuing CA
+    /// - **Subject Key Identifier**: SHA-1 hash of the subject's public key
     /// - **Key Usage**: Based on the certificate type (CA vs end-entity)
     /// - **Extended Key Usage**: Based on requested usage types
     ///
@@ -185,63 +194,96 @@ pub trait Issuer {
     /// ```rust
     /// use certkit::{
     ///     key::KeyPair,
-    ///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificationRequestInfo, DistinguishedName, Validity}},
+    ///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificateParams, DistinguishedName, Validity}},
     ///     issuer::Issuer,
     /// };
     ///
     /// // Set up CA
     /// let ca_key = KeyPair::generate_rsa(2048)?;
     /// let ca_subject = DistinguishedName::builder().common_name("Test CA".to_string()).build();
-    /// let ca_cert_info = CertificationRequestInfo::builder()
+    /// let ca_cert_info = CertificateParams::builder()
     ///     .subject(ca_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key)).is_ca(true).build();
-    /// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
-    /// let ca_issuer = CertificateWithPrivateKey { cert: ca_cert, key: ca_key };
+    /// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
+    /// let ca_issuer = CertificateWithPrivateKey::new(ca_cert, ca_key);
     ///
     /// // Create certificate request
     /// let end_key = KeyPair::generate_ecdsa_p256();
     /// let end_subject = DistinguishedName::builder().common_name("end-entity.com".to_string()).build();
-    /// let cert_request = CertificationRequestInfo::builder()
+    /// let cert_request = CertificateParams::builder()
     ///     .subject(end_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&end_key)).build();
     ///
     /// // Issue the certificate
-    /// let validity = Validity::for_days(365);
-    /// let issued_cert = ca_issuer.issue(&cert_request, validity);
+    /// let validity = Validity::for_days(365)?;
+    /// let issued_cert = ca_issuer.issue(&cert_request, validity)?;
     /// println!("Certificate issued with {} extensions",
-    ///          issued_cert.to_cert_info()?.extensions.len());
+    ///          issued_cert.params()?.extensions.len());
     /// # Ok::<(), certkit::error::CertKitError>(())
     /// ```
-    fn issue(&self, cert_request: &CertificationRequestInfo, validity: Validity) -> Certificate {
+    fn issue(
+        &self,
+        cert_request: &CertificateParams,
+        validity: Validity,
+    ) -> Result<Certificate, crate::error::CertKitError> {
         let signature_algo = match self.signing_key() {
             #[cfg(feature = "rsa")]
             KeyPair::Rsa { .. } => SignatureAlgorithm::Sha256WithRSA,
             #[cfg(feature = "p256")]
             KeyPair::EcdsaP256 { .. } => SignatureAlgorithm::Sha256WithECDSA,
             #[cfg(feature = "p384")]
-            KeyPair::EcdsaP384 { .. } => SignatureAlgorithm::Sha256WithECDSA,
+            KeyPair::EcdsaP384 { .. } => SignatureAlgorithm::Sha384WithECDSA,
             #[cfg(feature = "p521")]
-            KeyPair::EcdsaP521 { .. } => SignatureAlgorithm::Sha256WithECDSA,
+            KeyPair::EcdsaP521 { .. } => SignatureAlgorithm::Sha512WithECDSA,
             #[cfg(feature = "ed25519")]
-            KeyPair::Ed25519 { .. } => SignatureAlgorithm::Sha256WithEdDSA,
+            KeyPair::Ed25519 { .. } => SignatureAlgorithm::Ed25519,
         };
 
-        let public_key_info = self.signing_key().as_spki();
-        let key_id = <Sha1 as sha1::Digest>::digest(public_key_info.subject_public_key.raw_bytes());
-        let issuer_dn = self.issuer_name();
+        log::debug!(
+            "issuing certificate for \"{}\" (CA: {}, signature algorithm: {:?})",
+            cert_request.subject.common_name,
+            cert_request.is_ca,
+            signature_algo
+        );
 
+        // Authority Key Identifier: SHA-1 of the issuer's public key, so issued
+        // certs point back to this CA.
+        //
+        // SHA-1 is used here per RFC 5280 §4.2.1.2 Method 1.
+        let issuer_spki = self.signing_key().as_spki();
         let authority_key_id = AuthorityKeyIdentifier {
-            key_identifier: key_id.to_vec(),
-            authority_cert_issuer: issuer_dn.clone(),
-            authority_cert_serial_number: self.serial_number(),
+            key_identifier: <Sha1 as sha1::Digest>::digest(
+                issuer_spki.subject_public_key.raw_bytes(),
+            )
+            .to_vec(),
+            // PKIX profile: identify the issuer by key id only.
+            authority_cert_issuer: None,
+            authority_cert_serial_number: None,
         };
+
+        // Subject Key Identifier: SHA-1 of the subject's own key, computed the
+        // same way, so a child's AKI matches this cert's SKI during path building.
+        let subject_spki = cert_request.subject_public_key.as_spki();
+        let subject_key_id = SubjectKeyIdentifier {
+            key_identifier: <Sha1 as sha1::Digest>::digest(
+                subject_spki.subject_public_key.raw_bytes(),
+            )
+            .to_vec(),
+        };
+
+        let issuer_dn = self.issuer_name()?;
 
         let basic_constraints = BasicConstraints {
             is_ca: cert_request.is_ca,
-            max_path_length: None,
+            max_path_length: if cert_request.is_ca {
+                cert_request.max_path_length
+            } else {
+                None
+            },
         };
 
         let mut extensions: Vec<ExtensionParam> = vec![
-            ExtensionParam::from_extension(basic_constraints, true),
-            ExtensionParam::from_extension(authority_key_id, false),
+            ExtensionParam::from_extension(basic_constraints, true)?,
+            ExtensionParam::from_extension(authority_key_id, false)?,
+            ExtensionParam::from_extension(subject_key_id, false)?,
         ];
 
         let mut key_usage_flags: FlagSet<KeyUsages> = FlagSet::empty();
@@ -256,7 +298,17 @@ pub trait Issuer {
                 ExtendedKeyUsageOption::ClientAuth
                 | ExtendedKeyUsageOption::ServerAuth
                 | ExtendedKeyUsageOption::EmailProtection => {
-                    key_usage_flags |= KeyUsages::KeyEncipherment;
+                    // TLS 1.3 with ECDSA/Ed25519 requires DigitalSignature.
+                    // KeyEncipherment is only needed for RSA key transport
+                    // (TLS ≤1.2), so set it conditionally.
+                    key_usage_flags |= KeyUsages::DigitalSignature;
+                    #[cfg(feature = "rsa")]
+                    if matches!(
+                        cert_request.subject_public_key,
+                        crate::key::PublicKey::Rsa(_)
+                    ) {
+                        key_usage_flags |= KeyUsages::KeyEncipherment;
+                    }
                 }
                 ExtendedKeyUsageOption::CodeSigning
                 | ExtendedKeyUsageOption::TimeStamping
@@ -268,47 +320,174 @@ pub trait Issuer {
 
         if !key_usage_flags.is_empty() {
             let key_usage = KeyUsage(key_usage_flags);
-            extensions.push(ExtensionParam::from_extension(key_usage, true));
+            extensions.push(ExtensionParam::from_extension(key_usage, true)?);
         }
 
         if !cert_request.usages.is_empty() {
             let extended_key_usage = ExtendedKeyUsage {
                 usage: cert_request.usages.clone(),
             };
-            extensions.push(ExtensionParam::from_extension(extended_key_usage, true));
+            extensions.push(ExtensionParam::from_extension(extended_key_usage, true)?);
         }
 
-        let combined_extensions = cert_request
+        let combined_extensions: Vec<ExtensionParam> = cert_request
             .extensions
             .iter()
             .cloned()
             .chain(extensions)
             .collect();
+        log::trace!("certificate has {} extension(s)", combined_extensions.len());
+
+        // RFC 5280 §4.1.2.2: the serial number is a positive integer of at most
+        // 20 octets. Validate any serial before use so a bad override is a clear
+        // error rather than a panic deeper down.
+        let serial_number = self.serial_number();
+        if serial_number.is_empty() || serial_number.len() > 20 {
+            return Err(crate::error::CertKitError::InvalidInput(format!(
+                "serial number must be 1..=20 octets, got {}",
+                serial_number.len()
+            )));
+        }
 
         let tbs_cert = TbsCertificate {
-            serial_number: vec![1],
+            serial_number,
             signature_algorithm: signature_algo.clone(),
             issuer: issuer_dn,
-            not_before: validity.not_before,
-            not_after: validity.not_after,
+            not_before: validity.not_before(),
+            not_after: validity.not_after(),
             subject: cert_request.subject.clone(),
             subject_public_key: cert_request.subject_public_key.clone(),
             extensions: combined_extensions,
         };
 
-        let tbs_cert_inner = tbs_cert.to_tbs_certificate_inner();
+        let tbs_cert_inner = tbs_cert.to_tbs_certificate_inner()?;
 
         let signature = self
             .signing_key()
-            .sign_data(&tbs_cert_inner.to_der().unwrap())
-            .unwrap();
+            .sign_data(&tbs_cert_inner.to_der()?)
+            .map_err(|e| {
+                crate::error::CertKitError::CertificateError(format!("signing failed: {e}"))
+            })?;
+        log::trace!("certificate signed ({} byte signature)", signature.len());
 
         let cert_inner = CertificateInner {
             signature_algorithm: tbs_cert_inner.signature.clone(),
             tbs_certificate: tbs_cert_inner,
-            signature: der::asn1::BitString::from_bytes(&signature).unwrap(),
+            signature: der::asn1::BitString::from_bytes(&signature)?,
         };
 
-        Certificate { inner: cert_inner }
+        Ok(Certificate::from_inner(cert_inner))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Issuer;
+    use crate::cert::extensions::{
+        AuthorityKeyIdentifier, SubjectKeyIdentifier, ToAndFromX509Extension,
+    };
+    use crate::cert::params::{CertificateParams, DistinguishedName, Validity};
+    use crate::cert::{Certificate, CertificateWithPrivateKey};
+    use crate::key::{KeyPair, PublicKey};
+
+    fn request(common_name: &str, key: &KeyPair, is_ca: bool) -> CertificateParams {
+        crate::init_test_logger();
+        CertificateParams::builder()
+            .subject(
+                DistinguishedName::builder()
+                    .common_name(common_name.to_string())
+                    .build(),
+            )
+            .subject_public_key(PublicKey::from_key_pair(key))
+            .is_ca(is_ca)
+            .build()
+    }
+
+    /// Returns the first extension of type `E` carried by `cert`, if present.
+    fn extension<E: ToAndFromX509Extension>(cert: &Certificate) -> Option<E> {
+        let info = cert.params().unwrap();
+        info.extensions
+            .iter()
+            .find(|ext| ext.oid == E::OID)
+            .map(|ext| ext.to_extension::<E>().unwrap())
+    }
+
+    #[cfg(feature = "p256")]
+    #[test]
+    fn p256_signature_algorithm_is_ecdsa_with_sha256() {
+        let key = KeyPair::generate_ecdsa_p256();
+        let cert = Certificate::new_self_signed(&request("p256.ca", &key, true), &key).unwrap();
+        let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_256;
+        assert_eq!(cert.inner().signature_algorithm.oid, expected);
+        assert_eq!(cert.inner().tbs_certificate.signature.oid, expected);
+    }
+
+    #[cfg(feature = "p384")]
+    #[test]
+    fn p384_signature_algorithm_is_ecdsa_with_sha384() {
+        let key = KeyPair::generate_ecdsa_p384();
+        let cert = Certificate::new_self_signed(&request("p384.ca", &key, true), &key).unwrap();
+        let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_384;
+        assert_eq!(cert.inner().signature_algorithm.oid, expected);
+        assert_eq!(cert.inner().tbs_certificate.signature.oid, expected);
+    }
+
+    #[cfg(feature = "p521")]
+    #[test]
+    fn p521_signature_algorithm_is_ecdsa_with_sha512() {
+        let key = KeyPair::generate_ecdsa_p521();
+        let cert = Certificate::new_self_signed(&request("p521.ca", &key, true), &key).unwrap();
+        let expected = const_oid::db::rfc5912::ECDSA_WITH_SHA_512;
+        assert_eq!(cert.inner().signature_algorithm.oid, expected);
+        assert_eq!(cert.inner().tbs_certificate.signature.oid, expected);
+    }
+
+    /// Issued certificates carry a Subject Key Identifier, and their Authority
+    /// Key Identifier holds only the key id and matches the issuer's SKI, so a
+    /// chain links up during path building.
+    #[cfg(feature = "p256")]
+    #[test]
+    fn issued_chain_links_aki_to_issuer_ski() {
+        let root_key = KeyPair::generate_ecdsa_p256();
+        let root =
+            Certificate::new_self_signed(&request("Root CA", &root_key, true), &root_key).unwrap();
+        let root_ca = CertificateWithPrivateKey::new(root, root_key);
+
+        let int_key = KeyPair::generate_ecdsa_p256();
+        let int = root_ca
+            .issue(
+                &request("Intermediate CA", &int_key, true),
+                Validity::for_days(365).unwrap(),
+            )
+            .unwrap();
+        let int_ca = CertificateWithPrivateKey::new(int, int_key);
+
+        let leaf_key = KeyPair::generate_ecdsa_p256();
+        let leaf = int_ca
+            .issue(
+                &request("leaf", &leaf_key, false),
+                Validity::for_days(365).unwrap(),
+            )
+            .unwrap();
+
+        let root_ski = extension::<SubjectKeyIdentifier>(root_ca.cert()).expect("root SKI");
+        let int_ski = extension::<SubjectKeyIdentifier>(int_ca.cert()).expect("intermediate SKI");
+        assert!(
+            extension::<SubjectKeyIdentifier>(&leaf).is_some(),
+            "leaf must carry a Subject Key Identifier"
+        );
+
+        let int_aki = extension::<AuthorityKeyIdentifier>(int_ca.cert()).expect("intermediate AKI");
+        let leaf_aki = extension::<AuthorityKeyIdentifier>(&leaf).expect("leaf AKI");
+
+        // keyId-only AKI (PKIX profile).
+        assert!(int_aki.authority_cert_issuer.is_none());
+        assert!(int_aki.authority_cert_serial_number.is_none());
+        assert!(leaf_aki.authority_cert_issuer.is_none());
+        assert!(leaf_aki.authority_cert_serial_number.is_none());
+
+        // Each cert's AKI key id equals its issuer's SKI key id.
+        assert_eq!(int_aki.key_identifier, root_ski.key_identifier);
+        assert_eq!(leaf_aki.key_identifier, int_ski.key_identifier);
     }
 }

@@ -1,3 +1,5 @@
+//! X.509 certificate extensions.
+
 use const_oid::AssociatedOid;
 use der::{
     Decode, Encode,
@@ -14,10 +16,13 @@ use x509_cert::ext::pkix::name::GeneralName;
 /// ```
 /// use certkit::cert::extensions::SubjectAltName;
 /// use crate::certkit::cert::extensions::ToAndFromX509Extension;
-/// let san = SubjectAltName { names: vec!["example.com".to_string()] };
+/// let san = SubjectAltName {
+///     dns_names: vec!["example.com".to_string()],
+///     ..Default::default()
+/// };
 /// let encoded = san.to_x509_extension_value().unwrap();
 /// let decoded = SubjectAltName::from_x509_extension_value(&encoded).unwrap();
-/// assert_eq!(san.names, decoded.names);
+/// assert_eq!(san.dns_names, decoded.dns_names);
 /// ```
 pub trait ToAndFromX509Extension {
     /// The Object Identifier (OID) for the extension.
@@ -35,45 +40,82 @@ pub trait ToAndFromX509Extension {
 /// Represents the Subject Alternative Name (SAN) extension.
 ///
 /// This extension specifies additional identities for the subject of the certificate.
-///
-/// # Fields
-/// * `names` - A list of DNS names.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SubjectAltName {
-    pub names: Vec<String>,
+    pub dns_names: Vec<String>,
+    pub ip_addresses: Vec<std::net::IpAddr>,
+    pub email_addresses: Vec<String>,
 }
 
 impl ToAndFromX509Extension for SubjectAltName {
     const OID: ObjectIdentifier = x509_cert::ext::pkix::SubjectAltName::OID;
 
     fn to_x509_extension_value(&self) -> Result<Vec<u8>, CertKitError> {
-        let san = x509_cert::ext::pkix::SubjectAltName(
-            self.names
-                .iter()
-                .map(|name| {
-                    Ia5String::try_from(name.clone())
-                        .map(GeneralName::DnsName)
-                        .map_err(|e| CertKitError::InvalidInput(e.to_string()))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
+        let mut names: Vec<GeneralName> = Vec::new();
 
+        for dns in &self.dns_names {
+            let ia5 = Ia5String::try_from(dns.clone())
+                .map_err(|e| CertKitError::InvalidInput(format!("invalid DNS SAN '{dns}': {e}")))?;
+            names.push(GeneralName::DnsName(ia5));
+        }
+
+        for ip in &self.ip_addresses {
+            let octets: Vec<u8> = match ip {
+                std::net::IpAddr::V4(v4) => v4.octets().to_vec(),
+                std::net::IpAddr::V6(v6) => v6.octets().to_vec(),
+            };
+            let os = OctetString::new(octets)
+                .map_err(|e| CertKitError::EncodingError(format!("invalid IP SAN: {e}")))?;
+            names.push(GeneralName::IpAddress(os));
+        }
+
+        for email in &self.email_addresses {
+            let ia5 = Ia5String::try_from(email.clone()).map_err(|e| {
+                CertKitError::InvalidInput(format!("invalid email SAN '{email}': {e}"))
+            })?;
+            names.push(GeneralName::Rfc822Name(ia5));
+        }
+
+        let san = x509_cert::ext::pkix::SubjectAltName(names);
         Ok(san.to_der()?)
     }
 
     fn from_x509_extension_value(extension: &[u8]) -> Result<Self, CertKitError> {
         let san = x509_cert::ext::pkix::SubjectAltName::from_der(extension)?;
-        let names = san
-            .0
-            .iter()
-            .map(|name| match name {
-                GeneralName::DnsName(dns) => Ok(dns.to_string()),
-                _ => Err(CertKitError::InvalidInput(
-                    "Unsupported general name type".to_string(),
-                )),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { names })
+        let mut out = SubjectAltName::default();
+
+        for name in san.0.iter() {
+            match name {
+                GeneralName::DnsName(dns) => out.dns_names.push(dns.as_str().to_string()),
+                GeneralName::Rfc822Name(email) => {
+                    out.email_addresses.push(email.as_str().to_string())
+                }
+                GeneralName::IpAddress(os) => {
+                    let bytes = os.as_bytes();
+                    let ip = match bytes.len() {
+                        4 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                            bytes[0], bytes[1], bytes[2], bytes[3],
+                        )),
+                        16 => {
+                            let mut octets = [0u8; 16];
+                            octets.copy_from_slice(bytes);
+                            std::net::IpAddr::V6(std::net::Ipv6Addr::from(octets))
+                        }
+                        n => {
+                            return Err(CertKitError::DecodingError(format!(
+                                "invalid IP address length in SAN: {n} bytes"
+                            )));
+                        }
+                    };
+                    out.ip_addresses.push(ip);
+                }
+                other => {
+                    log::warn!("ignoring unsupported GeneralName variant in SAN: {other:?}");
+                }
+            }
+        }
+
+        Ok(out)
     }
 }
 
@@ -83,11 +125,12 @@ impl ToAndFromX509Extension for SubjectAltName {
 ///
 /// # Fields
 /// * `is_ca` - Indicates if the certificate is a CA.
-/// * `max_path_length` - The maximum number of intermediate CAs allowed.
+/// * `max_path_length` - The maximum number of intermediate CAs allowed below
+///   this one. `None` means unconstrained.
 #[derive(Default)]
 pub struct BasicConstraints {
     pub is_ca: bool,
-    pub max_path_length: Option<u32>,
+    pub max_path_length: Option<u8>,
 }
 
 impl ToAndFromX509Extension for BasicConstraints {
@@ -96,7 +139,7 @@ impl ToAndFromX509Extension for BasicConstraints {
     fn to_x509_extension_value(&self) -> Result<Vec<u8>, CertKitError> {
         let bc = x509_cert::ext::pkix::BasicConstraints {
             ca: self.is_ca,
-            path_len_constraint: self.max_path_length.map(|v| v as u8),
+            path_len_constraint: self.max_path_length,
         };
 
         Ok(bc.to_der()?)
@@ -106,7 +149,7 @@ impl ToAndFromX509Extension for BasicConstraints {
         let bc = x509_cert::ext::pkix::BasicConstraints::from_der(der_bytes)?;
         Ok(Self {
             is_ca: bc.ca,
-            max_path_length: bc.path_len_constraint.map(|v| v as u32),
+            max_path_length: bc.path_len_constraint,
         })
     }
 }
@@ -214,7 +257,14 @@ impl From<ExtendedKeyUsageOption> for ObjectIdentifier {
 
 /// Represents the Authority Key Identifier (AKI) extension.
 ///
-/// This extension identifies the public key corresponding to the private key used to sign the certificate.
+/// Identifies the public key of the CA that signed the certificate.
+///
+/// The `authorityCertIssuer`/`authorityCertSerialNumber` fields are optional in
+/// X.509 and faithfully preserved when decoding. When CertKit *issues* a
+/// certificate it follows the common PKIX profile (RFC 5280 §4.2.1.1) and emits
+/// only the key identifier, leaving those fields `None`; path building then
+/// relies on matching this key identifier against the issuer's
+/// [`SubjectKeyIdentifier`].
 ///
 /// # Fields
 /// * `key_identifier` - The key identifier.
@@ -222,24 +272,29 @@ impl From<ExtendedKeyUsageOption> for ObjectIdentifier {
 /// * `authority_cert_serial_number` - The issuer's certificate serial number.
 pub struct AuthorityKeyIdentifier {
     pub key_identifier: Vec<u8>,
-    pub authority_cert_issuer: DistinguishedName,
-    pub authority_cert_serial_number: Vec<u8>,
+    pub authority_cert_issuer: Option<DistinguishedName>,
+    pub authority_cert_serial_number: Option<Vec<u8>>,
 }
 
 impl ToAndFromX509Extension for AuthorityKeyIdentifier {
     const OID: ObjectIdentifier = x509_cert::ext::pkix::AuthorityKeyIdentifier::OID;
 
     fn to_x509_extension_value(&self) -> Result<Vec<u8>, CertKitError> {
-        let general_names = vec![GeneralName::DirectoryName(
-            self.authority_cert_issuer.as_x509_name(),
-        )];
+        let authority_cert_issuer = match self.authority_cert_issuer.as_ref() {
+            Some(dn) => Some(vec![GeneralName::DirectoryName(dn.as_x509_name()?)]),
+            None => None,
+        };
+
+        let authority_cert_serial_number = self
+            .authority_cert_serial_number
+            .as_ref()
+            .map(|sn| x509_cert::serial_number::SerialNumber::new(sn.as_slice()))
+            .transpose()?;
 
         let aki = x509_cert::ext::pkix::AuthorityKeyIdentifier {
             key_identifier: Some(OctetString::new(self.key_identifier.as_slice())?),
-            authority_cert_issuer: Some(general_names),
-            authority_cert_serial_number: Some(x509_cert::serial_number::SerialNumber::new(
-                self.authority_cert_serial_number.as_slice(),
-            )?),
+            authority_cert_issuer,
+            authority_cert_serial_number,
         };
 
         Ok(aki.to_der()?)
@@ -254,10 +309,15 @@ impl ToAndFromX509Extension for AuthorityKeyIdentifier {
             .and_then(|names| {
                 names.iter().find_map(|name| match name {
                     GeneralName::DirectoryName(dn) => Some(DistinguishedName::from_x509_name(dn)),
-                    _ => None,
+                    other => {
+                        log::warn!(
+                            "ignoring non-DirectoryName in AKI authorityCertIssuer: {other:?}"
+                        );
+                        None
+                    }
                 })
             })
-            .unwrap_or_default();
+            .transpose()?;
 
         Ok(Self {
             key_identifier: aki
@@ -267,8 +327,36 @@ impl ToAndFromX509Extension for AuthorityKeyIdentifier {
             authority_cert_issuer,
             authority_cert_serial_number: aki
                 .authority_cert_serial_number
-                .map(|sn| sn.as_bytes().to_vec())
-                .unwrap_or_default(),
+                .map(|sn| sn.as_bytes().to_vec()),
+        })
+    }
+}
+
+/// Represents the Subject Key Identifier (SKI) extension.
+///
+/// # Fields
+/// * `key_identifier` - Identifies the subject's public key (the SHA-1 digest of
+///   the `subjectPublicKey`).
+pub struct SubjectKeyIdentifier {
+    pub key_identifier: Vec<u8>,
+}
+
+impl ToAndFromX509Extension for SubjectKeyIdentifier {
+    const OID: ObjectIdentifier = x509_cert::ext::pkix::SubjectKeyIdentifier::OID;
+
+    fn to_x509_extension_value(&self) -> Result<Vec<u8>, CertKitError> {
+        let ski = x509_cert::ext::pkix::SubjectKeyIdentifier(OctetString::new(
+            self.key_identifier.as_slice(),
+        )?);
+
+        Ok(ski.to_der()?)
+    }
+
+    fn from_x509_extension_value(extension: &[u8]) -> Result<Self, CertKitError> {
+        let ski = x509_cert::ext::pkix::SubjectKeyIdentifier::from_der(extension)?;
+
+        Ok(Self {
+            key_identifier: ski.0.as_bytes().to_vec(),
         })
     }
 }
@@ -276,6 +364,20 @@ impl ToAndFromX509Extension for AuthorityKeyIdentifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subject_alt_name_round_trips_dns_ip_and_email() {
+        let original = SubjectAltName {
+            dns_names: vec!["example.com".to_string(), "www.example.com".to_string()],
+            ip_addresses: vec!["127.0.0.1".parse().unwrap(), "2001:db8::1".parse().unwrap()],
+            email_addresses: vec!["admin@example.com".to_string()],
+        };
+        let encoded = original.to_x509_extension_value().unwrap();
+        let decoded = SubjectAltName::from_x509_extension_value(&encoded).unwrap();
+        assert_eq!(original.dns_names, decoded.dns_names);
+        assert_eq!(original.ip_addresses, decoded.ip_addresses);
+        assert_eq!(original.email_addresses, decoded.email_addresses);
+    }
 
     #[test]
     fn test_basic_constraints_encoding_decoding() {
@@ -290,30 +392,56 @@ mod tests {
     }
 
     #[test]
-    fn test_authority_key_identifier_encoding_decoding() {
+    fn test_authority_key_identifier_key_id_only() {
+        // The form CertKit issues: key identifier only, optional fields absent.
         let original = AuthorityKeyIdentifier {
             key_identifier: vec![1, 2, 3, 4, 5],
-            authority_cert_issuer: DistinguishedName {
+            authority_cert_issuer: None,
+            authority_cert_serial_number: None,
+        };
+        let encoded = original.to_x509_extension_value().unwrap();
+        let decoded = AuthorityKeyIdentifier::from_x509_extension_value(&encoded).unwrap();
+        assert_eq!(original.key_identifier, decoded.key_identifier);
+        assert!(decoded.authority_cert_issuer.is_none());
+        assert!(decoded.authority_cert_serial_number.is_none());
+    }
+
+    #[test]
+    fn test_authority_key_identifier_with_issuer_and_serial() {
+        // A full AKI (e.g. parsed from a third-party cert) round-trips faithfully.
+        let original = AuthorityKeyIdentifier {
+            key_identifier: vec![1, 2, 3, 4, 5],
+            authority_cert_issuer: Some(DistinguishedName {
                 common_name: "Test CA".to_string(),
                 country: Some("US".to_string()),
                 state: Some("California".to_string()),
                 locality: Some("San Francisco".to_string()),
                 organization: Some("Test Org".to_string()),
                 organization_unit: Some("Test Unit".to_string()),
-            },
-            authority_cert_serial_number: vec![6, 7, 8, 9, 10],
+            }),
+            authority_cert_serial_number: Some(vec![6, 7, 8, 9, 10]),
         };
         let encoded = original.to_x509_extension_value().unwrap();
         let decoded = AuthorityKeyIdentifier::from_x509_extension_value(&encoded).unwrap();
         assert_eq!(original.key_identifier, decoded.key_identifier);
         assert_eq!(
-            original.authority_cert_issuer.common_name,
-            decoded.authority_cert_issuer.common_name
+            original.authority_cert_issuer.unwrap().common_name,
+            decoded.authority_cert_issuer.unwrap().common_name
         );
         assert_eq!(
             original.authority_cert_serial_number,
             decoded.authority_cert_serial_number
         );
+    }
+
+    #[test]
+    fn test_subject_key_identifier_encoding_decoding() {
+        let original = SubjectKeyIdentifier {
+            key_identifier: vec![1, 2, 3, 4, 5],
+        };
+        let encoded = original.to_x509_extension_value().unwrap();
+        let decoded = SubjectKeyIdentifier::from_x509_extension_value(&encoded).unwrap();
+        assert_eq!(original.key_identifier, decoded.key_identifier);
     }
 
     #[test]

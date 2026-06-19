@@ -1,28 +1,17 @@
+//! Certificate creation, encoding/decoding, and management.
+
 pub mod extensions;
 pub mod params;
 
-use crate::error::CertKitError;
-pub type Result<T> = std::result::Result<T, CertKitError>;
+use crate::error::{CertKitError, Result};
 use der::{Encode, EncodePem};
 use extensions::ToAndFromX509Extension;
-use params::{CertificationRequestInfo, ExtensionParam};
+use params::{CertificateParams, ExtensionParam};
 use time::OffsetDateTime;
 use x509_cert::certificate::CertificateInner;
 
 use crate::issuer::Issuer;
 use crate::key::KeyPair;
-
-// use crate::{key::KeyPair, pki::sign_data};
-
-// #[derive(Debug, Clone, Builder)]
-// pub struct TbsCertificate {
-//     pub serial_number: Vec<u8>,
-//     pub issuer_dn: DistinguishedName,
-//     pub validity: Validity,
-//     pub subject_dn: DistinguishedName,
-//     pub subject_public_key: PublicKey,
-//     pub extensions: Vec<ExtensionParam>,
-// }
 
 /// Represents the supported signature algorithms for certificates.
 ///
@@ -53,7 +42,7 @@ use crate::key::KeyPair;
 /// // Would use SignatureAlgorithm::Sha256WithECDSA
 ///
 /// let ed25519_key = KeyPair::generate_ed25519();
-/// // Would use SignatureAlgorithm::Sha256WithEdDSA
+/// // Would use SignatureAlgorithm::Ed25519
 /// # Ok::<(), certkit::error::CertKitError>(())
 /// ```
 ///
@@ -101,16 +90,16 @@ pub enum SignatureAlgorithm {
     /// - **Security**: ~256 bits (with P-521 curve)
     /// - **Compatibility**: Supported in modern systems
     Sha512WithECDSA,
-    /// SHA-256 with EdDSA (Ed25519).
+    /// Ed25519 (Edwards-curve Digital Signature Algorithm).
     ///
-    /// Uses Ed25519 signature scheme. Note that Ed25519 doesn't actually
-    /// use SHA-256 internally (it uses SHA-512 and other functions), but
-    /// this enum variant represents the Ed25519 algorithm identifier.
+    /// Uses the Ed25519 signature scheme as defined in RFC 8032.
+    /// Ed25519 uses its own internal hashing (SHA-512) and does not
+    /// require an external hash function.
     ///
     /// - **OID**: 1.3.101.112 (id-Ed25519)
     /// - **Security**: ~128 bits
     /// - **Compatibility**: Supported in newer systems (RFC 8410)
-    Sha256WithEdDSA,
+    Ed25519,
 }
 
 impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
@@ -136,10 +125,22 @@ impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
                 oid: const_oid::db::rfc5912::ECDSA_WITH_SHA_512,
                 parameters: None,
             },
-            SignatureAlgorithm::Sha256WithEdDSA => x509_cert::spki::AlgorithmIdentifierOwned {
+            SignatureAlgorithm::Ed25519 => x509_cert::spki::AlgorithmIdentifierOwned {
                 oid: const_oid::db::rfc8410::ID_ED_25519,
                 parameters: None,
             },
+        }
+    }
+}
+
+impl std::fmt::Display for SignatureAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sha256WithRSA => write!(f, "SHA-256 with RSA"),
+            Self::Sha256WithECDSA => write!(f, "SHA-256 with ECDSA"),
+            Self::Sha384WithECDSA => write!(f, "SHA-384 with ECDSA"),
+            Self::Sha512WithECDSA => write!(f, "SHA-512 with ECDSA"),
+            Self::Ed25519 => write!(f, "Ed25519"),
         }
     }
 }
@@ -166,7 +167,7 @@ impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
 /// ```rust
 /// use certkit::{
 ///     key::KeyPair,
-///     cert::{Certificate, params::{CertificationRequestInfo, DistinguishedName}},
+///     cert::{Certificate, params::{CertificateParams, DistinguishedName}},
 /// };
 ///
 /// // Generate a key pair
@@ -180,13 +181,13 @@ impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
 ///     .build();
 ///
 /// // Create certificate request info
-/// let cert_info = CertificationRequestInfo::builder()
+/// let cert_info = CertificateParams::builder()
 ///     .subject(subject)
 ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
 ///     .build();
 ///
 /// // Generate the self-signed certificate
-/// let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+/// let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
 ///
 /// // Export to different formats
 /// let der_bytes = certificate.to_der()?;
@@ -201,15 +202,15 @@ impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
 ///
 /// ```rust
 /// use certkit::cert::Certificate;
-/// # use certkit::{key::KeyPair, cert::params::{CertificationRequestInfo, DistinguishedName}};
+/// # use certkit::{key::KeyPair, cert::params::{CertificateParams, DistinguishedName}};
 /// # let key_pair = KeyPair::generate_ecdsa_p256();
 /// # let subject = DistinguishedName::builder().common_name("test".to_string()).build();
-/// # let cert_info = CertificationRequestInfo::builder()
+/// # let cert_info = CertificateParams::builder()
 /// #     .subject(subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair)).build();
-/// # let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+/// # let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
 ///
 /// // Extract certificate information
-/// let cert_info = certificate.to_cert_info()?;
+/// let cert_info = certificate.params()?;
 /// println!("Subject: {}", cert_info.subject.common_name);
 /// println!("Is CA: {}", cert_info.is_ca);
 /// println!("Extensions: {}", cert_info.extensions.len());
@@ -217,11 +218,60 @@ impl From<SignatureAlgorithm> for x509_cert::spki::AlgorithmIdentifierOwned {
 /// ```
 #[derive(Debug, Clone)]
 pub struct Certificate {
-    /// The inner representation of the certificate.
-    pub inner: CertificateInner,
+    inner: CertificateInner,
 }
 
 impl Certificate {
+    /// Creates a `Certificate` from the raw `x509_cert` inner representation.
+    pub(crate) fn from_inner(inner: CertificateInner) -> Self {
+        Self { inner }
+    }
+
+    /// Returns a reference to the underlying `x509_cert` certificate.
+    #[cfg(test)]
+    pub(crate) fn inner(&self) -> &CertificateInner {
+        &self.inner
+    }
+
+    /// Parses a certificate from DER-encoded bytes.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::DecodingError` if the bytes are not a valid
+    /// DER-encoded X.509 certificate.
+    pub fn from_der(bytes: &[u8]) -> Result<Self> {
+        use der::Decode;
+        let inner = CertificateInner::from_der(bytes)
+            .map_err(|e| CertKitError::DecodingError(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Parses a certificate from a PEM-encoded string.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::DecodingError` if the string is not a valid
+    /// PEM-encoded X.509 certificate.
+    pub fn from_pem(pem: &str) -> Result<Self> {
+        use der::DecodePem;
+        let inner = CertificateInner::from_pem(pem)
+            .map_err(|e| CertKitError::DecodingError(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Parses a certificate from PEM or DER-encoded bytes.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::DecodingError` if the bytes are not a valid
+    /// X.509 certificate in either format.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.starts_with(b"-----BEGIN") {
+            let pem = std::str::from_utf8(bytes)
+                .map_err(|e| CertKitError::DecodingError(format!("invalid UTF-8 in PEM: {e}")))?;
+            Self::from_pem(pem)
+        } else {
+            Self::from_der(bytes)
+        }
+    }
+
     /// Encodes the certificate into DER format.
     ///
     /// Converts the certificate to Distinguished Encoding Rules (DER) format,
@@ -238,17 +288,17 @@ impl Certificate {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use certkit::{key::KeyPair, cert::{Certificate, params::{CertificationRequestInfo, DistinguishedName}}};
+    /// use certkit::{key::KeyPair, cert::{Certificate, params::{CertificateParams, DistinguishedName}}};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let key_pair = KeyPair::generate_rsa(2048)?;
     /// let subject = DistinguishedName::builder().common_name("test.com".to_string()).build();
-    /// let cert_info = CertificationRequestInfo::builder()
+    /// let cert_info = CertificateParams::builder()
     ///     .subject(subject)
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
     ///     .build();
     ///
-    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
     /// let der_bytes = certificate.to_der()?;
     ///
     /// // Save to file or transmit over network
@@ -257,8 +307,8 @@ impl Certificate {
     /// # Ok(())
     /// # }
     /// ```
-    /// ```
     pub fn to_der(&self) -> Result<Vec<u8>> {
+        log::trace!("encoding certificate to DER");
         self.inner
             .to_der()
             .map_err(|e| CertKitError::EncodingError(e.to_string()))
@@ -279,17 +329,17 @@ impl Certificate {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use certkit::{key::KeyPair, cert::{Certificate, params::{CertificationRequestInfo, DistinguishedName}}};
+    /// use certkit::{key::KeyPair, cert::{Certificate, params::{CertificateParams, DistinguishedName}}};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let key_pair = KeyPair::generate_ed25519();
     /// let subject = DistinguishedName::builder().common_name("server.example.com".to_string()).build();
-    /// let cert_info = CertificationRequestInfo::builder()
+    /// let cert_info = CertificateParams::builder()
     ///     .subject(subject)
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
     ///     .build();
     ///
-    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
     /// let pem_string = certificate.to_pem()?;
     ///
     /// println!("Certificate in PEM format:\n{}", pem_string);
@@ -306,19 +356,63 @@ impl Certificate {
     /// - Base64-encoded DER data (64 characters per line)
     /// - "-----END CERTIFICATE-----" footer
     pub fn to_pem(&self) -> Result<String> {
+        log::trace!("encoding certificate to PEM");
         self.inner
             .to_pem(pkcs8::LineEnding::LF)
             .map_err(|e| CertKitError::EncodingError(e.to_string()))
     }
 
-    /// Extracts certificate information into a `CertificationRequestInfo` object.
+    /// Computes the SHA-256 fingerprint of the DER-encoded certificate.
+    ///
+    /// The fingerprint is the SHA-256 hash of the entire DER-encoded
+    /// certificate, which is the universally accepted way to uniquely
+    /// identify a certificate. This matches the output of
+    /// `openssl x509 -fingerprint -sha256`.
+    ///
+    /// # Returns
+    /// A 32-byte array containing the SHA-256 digest.
+    ///
+    /// # Errors
+    /// Returns `CertKitError::EncodingError` if the certificate cannot
+    /// be DER-encoded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use certkit::{
+    ///     key::KeyPair,
+    ///     cert::{Certificate, params::{CertificateParams, DistinguishedName}},
+    /// };
+    ///
+    /// let key = KeyPair::generate_ecdsa_p256();
+    /// let subject = DistinguishedName::builder()
+    ///     .common_name("test".to_string())
+    ///     .build();
+    /// let params = CertificateParams::builder()
+    ///     .subject(subject)
+    ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key))
+    ///     .build();
+    /// let cert = Certificate::new_self_signed(&params, &key).unwrap();
+    ///
+    /// let fp = cert.fingerprint().unwrap();
+    /// println!("SHA-256 fingerprint: {:02X?}", fp);
+    /// assert_eq!(fp.len(), 32);
+    /// ```
+    pub fn fingerprint(&self) -> Result<[u8; 32]> {
+        use sha2::Digest;
+        let der = self.to_der()?;
+        let hash = sha2::Sha256::digest(&der);
+        Ok(hash.into())
+    }
+
+    /// Extracts certificate information into a `CertificateParams` object.
     ///
     /// Parses the certificate and extracts key information including the subject,
     /// public key, extensions, and CA status. This is useful for certificate
     /// analysis, validation, and creating derived certificates.
     ///
     /// # Returns
-    /// A `Result` containing the `CertificationRequestInfo` with extracted details,
+    /// A `Result` containing the `CertificateParams` with extracted details,
     /// or a `CertKitError` on failure.
     ///
     /// # Errors
@@ -330,7 +424,7 @@ impl Certificate {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use certkit::{key::KeyPair, cert::{Certificate, params::{CertificationRequestInfo, DistinguishedName}}};
+    /// use certkit::{key::KeyPair, cert::{Certificate, params::{CertificateParams, DistinguishedName}}};
     ///
     /// # fn main() -> Result<(), certkit::error::CertKitError> {
     /// // Create a certificate
@@ -340,16 +434,16 @@ impl Certificate {
     ///     .organization("Example CA".to_string())
     ///     .build();
     ///
-    /// let cert_info = CertificationRequestInfo::builder()
+    /// let cert_info = CertificateParams::builder()
     ///     .subject(subject)
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
     ///     .is_ca(true)
     ///     .build();
     ///
-    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
     ///
     /// // Extract information back from the certificate
-    /// let extracted_info = certificate.to_cert_info()?;
+    /// let extracted_info = certificate.params()?;
     /// println!("Subject CN: {}", extracted_info.subject.common_name);
     /// println!("Is CA: {}", extracted_info.is_ca);
     /// println!("Number of extensions: {}", extracted_info.extensions.len());
@@ -365,17 +459,17 @@ impl Certificate {
     /// - **CA Status**: Whether this is a CA certificate
     /// - **Key Usages**: Extended key usage extensions
     /// - **Extensions**: All X.509 extensions present in the certificate
-    pub fn to_cert_info(&self) -> Result<CertificationRequestInfo> {
+    pub fn params(&self) -> Result<CertificateParams> {
         let inner_tbs_cert = self.inner.tbs_certificate.clone();
 
-        let subject = params::DistinguishedName::from_x509_name(&inner_tbs_cert.subject);
+        let subject = params::DistinguishedName::from_x509_name(&inner_tbs_cert.subject)?;
 
         let subject_public_key =
             crate::key::PublicKey::from_x509spki(&inner_tbs_cert.subject_public_key_info)?;
 
         let extensions: Vec<ExtensionParam> = inner_tbs_cert
             .extensions
-            .unwrap()
+            .unwrap_or_default()
             .iter()
             .map(|ext| ExtensionParam {
                 oid: ext.extn_id,
@@ -398,25 +492,21 @@ impl Certificate {
             .next()
             .unwrap_or_default();
 
-        let is_ca = extensions
+        let basic_constraints = extensions
             .iter()
-            .filter_map(|ext| {
-                if ext.oid == crate::cert::extensions::BasicConstraints::OID {
-                    let basic_constraints: crate::cert::extensions::BasicConstraints =
-                        ext.to_extension().unwrap_or_default();
-                    Some(basic_constraints.is_ca)
-                } else {
-                    None
-                }
+            .find(|ext| ext.oid == crate::cert::extensions::BasicConstraints::OID)
+            .map(|ext| {
+                ext.to_extension::<crate::cert::extensions::BasicConstraints>()
+                    .unwrap_or_default()
             })
-            .next()
-            .unwrap_or(false);
+            .unwrap_or_default();
 
-        Ok(CertificationRequestInfo {
+        Ok(CertificateParams {
             subject: subject.clone(),
             subject_public_key,
             usages,
-            is_ca,
+            is_ca: basic_constraints.is_ca,
+            max_path_length: basic_constraints.max_path_length,
             extensions,
         })
     }
@@ -429,7 +519,7 @@ impl Certificate {
     ///
     /// # Certificate Properties
     /// - **Validity**: 365 days from creation time
-    /// - **Serial Number**: Fixed value of 1
+    /// - **Serial Number**: 20-byte CSPRNG value (RFC 5280 §4.1.2.2 compliant)
     /// - **Version**: X.509 v3
     /// - **Signature Algorithm**: Automatically selected based on key type
     ///
@@ -449,7 +539,7 @@ impl Certificate {
     /// ```rust,no_run
     /// use certkit::{
     ///     key::KeyPair,
-    ///     cert::{Certificate, params::{CertificationRequestInfo, DistinguishedName}},
+    ///     cert::{Certificate, params::{CertificateParams, DistinguishedName}},
     /// };
     ///
     /// # fn main() -> Result<(), certkit::error::CertKitError> {
@@ -461,13 +551,13 @@ impl Certificate {
     ///     .country("US".to_string())
     ///     .build();
     ///
-    /// let cert_info = CertificationRequestInfo::builder()
+    /// let cert_info = CertificateParams::builder()
     ///     .subject(subject)
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
     ///     .is_ca(true)  // Mark as CA certificate
     ///     .build();
     ///
-    /// let root_cert = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let root_cert = Certificate::new_self_signed(&cert_info, &key_pair)?;
     /// println!("Root CA certificate created");
     /// # Ok(())
     /// # }
@@ -480,7 +570,7 @@ impl Certificate {
     ///     key::KeyPair,
     ///     cert::{
     ///         Certificate,
-    ///         params::{CertificationRequestInfo, DistinguishedName, ExtensionParam},
+    ///         params::{CertificateParams, DistinguishedName, ExtensionParam},
     ///         extensions::{SubjectAltName, ToAndFromX509Extension},
     ///     },
     /// };
@@ -490,20 +580,22 @@ impl Certificate {
     ///
     /// // Create Subject Alternative Name extension
     /// let san = SubjectAltName {
-    ///     names: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+    ///     dns_names: vec!["localhost".to_string()],
+    ///     ip_addresses: vec!["127.0.0.1".parse().unwrap()],
+    ///     ..Default::default()
     /// };
     ///
     /// let subject = DistinguishedName::builder()
     ///     .common_name("localhost".to_string())
     ///     .build();
     ///
-    /// let cert_info = CertificationRequestInfo::builder()
+    /// let cert_info = CertificateParams::builder()
     ///     .subject(subject)
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
-    ///     .extensions(vec![ExtensionParam::from_extension(san, false)])
+    ///     .extensions(vec![ExtensionParam::from_extension(san, false)?])
     ///     .build();
     ///
-    /// let cert = Certificate::new_self_signed(&cert_info, &key_pair);
+    /// let cert = Certificate::new_self_signed(&cert_info, &key_pair)?;
     /// println!("Self-signed certificate with SAN created");
     /// # Ok(())
     /// # }
@@ -514,7 +606,7 @@ impl Certificate {
     /// - **Development/testing**: Quick certificate generation for testing
     /// - **Internal services**: Certificates for internal-only applications
     /// - **Bootstrap certificates**: Initial certificates for certificate enrollment
-    pub fn new_self_signed(cert_info: &CertificationRequestInfo, key: &KeyPair) -> Self {
+    pub fn new_self_signed(cert_info: &CertificateParams, key: &KeyPair) -> Result<Self> {
         let now = OffsetDateTime::now_utc();
         Self::new_self_signed_with_expiration(cert_info, key, now, now + time::Duration::days(365))
     }
@@ -526,7 +618,7 @@ impl Certificate {
     /// or for testing purposes.
     ///
     /// # Certificate Properties
-    /// - **Serial Number**: Fixed value of 1
+    /// - **Serial Number**: 20-byte CSPRNG value (RFC 5280 §4.1.2.2 compliant)
     /// - **Version**: X.509 v3
     /// - **Signature Algorithm**: Automatically selected based on key type
     ///
@@ -546,7 +638,7 @@ impl Certificate {
     /// ```rust,no_run
     /// use certkit::{
     ///     key::KeyPair,
-    ///     cert::{Certificate, params::{CertificationRequestInfo, DistinguishedName}},
+    ///     cert::{Certificate, params::{CertificateParams, DistinguishedName}},
     /// };
     ///
     /// # fn main() -> Result<(), certkit::error::CertKitError> {
@@ -559,7 +651,7 @@ impl Certificate {
     ///     .country("US".to_string())
     ///     .build();
     ///
-    /// let cert_info = CertificationRequestInfo::builder()
+    /// let cert_info = CertificateParams::builder()
     ///     .subject(subject)
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
     ///     .is_ca(true)  // Mark as CA certificate
@@ -567,7 +659,7 @@ impl Certificate {
     ///
     /// let now = OffsetDateTime::now_utc();
     ///
-    /// let root_cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365));
+    /// let root_cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365))?;
     /// println!("Root CA certificate created");
     /// # Ok(())
     /// # }
@@ -580,7 +672,7 @@ impl Certificate {
     ///     key::KeyPair,
     ///     cert::{
     ///         Certificate,
-    ///         params::{CertificationRequestInfo, DistinguishedName, ExtensionParam},
+    ///         params::{CertificateParams, DistinguishedName, ExtensionParam},
     ///         extensions::{SubjectAltName, ToAndFromX509Extension},
     ///     },
     /// };
@@ -591,22 +683,24 @@ impl Certificate {
     ///
     /// // Create Subject Alternative Name extension
     /// let san = SubjectAltName {
-    ///     names: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+    ///     dns_names: vec!["localhost".to_string()],
+    ///     ip_addresses: vec!["127.0.0.1".parse().unwrap()],
+    ///     ..Default::default()
     /// };
     ///
     /// let subject = DistinguishedName::builder()
     ///     .common_name("localhost".to_string())
     ///     .build();
     ///
-    /// let cert_info = CertificationRequestInfo::builder()
+    /// let cert_info = CertificateParams::builder()
     ///     .subject(subject)
     ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
-    ///     .extensions(vec![ExtensionParam::from_extension(san, false)])
+    ///     .extensions(vec![ExtensionParam::from_extension(san, false)?])
     ///     .build();
     ///
     /// let now = OffsetDateTime::now_utc();
     ///
-    /// let cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365));
+    /// let cert = Certificate::new_self_signed_with_expiration(&cert_info, &key_pair, now, now + time::Duration::days(365))?;
     /// println!("Self-signed certificate with SAN created");
     /// # Ok(())
     /// # }
@@ -618,11 +712,15 @@ impl Certificate {
     /// - **Internal services**: Certificates for internal-only applications
     /// - **Bootstrap certificates**: Initial certificates for certificate enrollment
     pub fn new_self_signed_with_expiration(
-        cert_info: &CertificationRequestInfo,
+        cert_info: &CertificateParams,
         key: &KeyPair,
         not_before: OffsetDateTime,
         not_after: OffsetDateTime,
-    ) -> Self {
+    ) -> Result<Self> {
+        log::debug!(
+            "creating self-signed certificate for \"{}\"",
+            cert_info.subject.common_name
+        );
         let subject_dn = cert_info.subject.clone();
 
         // For self-signed certificates, the issuer is the same as the subject
@@ -631,10 +729,7 @@ impl Certificate {
             key,
         };
 
-        let validity = params::Validity {
-            not_before,
-            not_after,
-        };
+        let validity = params::Validity::new(not_before, not_after)?;
 
         self_issuer.issue(cert_info, validity)
     }
@@ -647,16 +742,12 @@ struct SelfIssuer<'a> {
 }
 
 impl Issuer for SelfIssuer<'_> {
-    fn issuer_name(&self) -> params::DistinguishedName {
-        self.name.clone()
+    fn issuer_name(&self) -> Result<params::DistinguishedName> {
+        Ok(self.name.clone())
     }
 
     fn signing_key(&self) -> &KeyPair {
         self.key
-    }
-
-    fn serial_number(&self) -> Vec<u8> {
-        vec![1]
     }
 }
 
@@ -681,7 +772,7 @@ impl Issuer for SelfIssuer<'_> {
 /// ```rust
 /// use certkit::{
 ///     key::KeyPair,
-///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificationRequestInfo, DistinguishedName}},
+///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificateParams, DistinguishedName}},
 /// };
 ///
 /// // Generate CA key pair
@@ -693,19 +784,16 @@ impl Issuer for SelfIssuer<'_> {
 ///     .organization("Example Corp".to_string())
 ///     .build();
 ///
-/// let ca_cert_info = CertificationRequestInfo::builder()
+/// let ca_cert_info = CertificateParams::builder()
 ///     .subject(ca_subject)
 ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key))
 ///     .is_ca(true)
 ///     .build();
 ///
-/// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
+/// let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
 ///
 /// // Combine certificate and private key
-/// let ca_with_key = CertificateWithPrivateKey {
-///     cert: ca_cert,
-///     key: ca_key,
-/// };
+/// let ca_with_key = CertificateWithPrivateKey::new(ca_cert, ca_key);
 ///
 /// println!("CA certificate with private key created");
 /// # Ok::<(), certkit::error::CertKitError>(())
@@ -716,16 +804,16 @@ impl Issuer for SelfIssuer<'_> {
 /// ```rust
 /// use certkit::{
 ///     key::KeyPair,
-///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificationRequestInfo, DistinguishedName, Validity}},
+///     cert::{Certificate, CertificateWithPrivateKey, params::{CertificateParams, DistinguishedName, Validity}},
 ///     issuer::Issuer,
 /// };
 ///
 /// # let ca_key = KeyPair::generate_ecdsa_p256();
 /// # let ca_subject = DistinguishedName::builder().common_name("CA".to_string()).build();
-/// # let ca_cert_info = CertificationRequestInfo::builder()
+/// # let ca_cert_info = CertificateParams::builder()
 ///     .subject(ca_subject).subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key)).is_ca(true).build();
-/// # let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
-/// # let ca_with_key = CertificateWithPrivateKey { cert: ca_cert, key: ca_key };
+/// # let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
+/// # let ca_with_key = CertificateWithPrivateKey::new(ca_cert, ca_key);
 ///
 /// // Generate end-entity key pair
 /// let server_key = KeyPair::generate_rsa(2048)?;
@@ -735,14 +823,14 @@ impl Issuer for SelfIssuer<'_> {
 ///     .common_name("server.example.com".to_string())
 ///     .build();
 ///
-/// let server_cert_info = CertificationRequestInfo::builder()
+/// let server_cert_info = CertificateParams::builder()
 ///     .subject(server_subject)
 ///     .subject_public_key(certkit::key::PublicKey::from_key_pair(&server_key))
 ///     .build();
 ///
 /// // Issue the server certificate using the CA
-/// let validity = Validity::for_days(365);
-/// let server_cert = ca_with_key.issue(&server_cert_info, validity);
+/// let validity = Validity::for_days(365)?;
+/// let server_cert = ca_with_key.issue(&server_cert_info, validity)?;
 ///
 /// println!("Server certificate issued by CA");
 /// # Ok::<(), certkit::error::CertKitError>(())
@@ -756,32 +844,41 @@ impl Issuer for SelfIssuer<'_> {
 /// - **Backup and Recovery**: Ensure secure backup of CA key material
 #[derive(Debug, Clone)]
 pub struct CertificateWithPrivateKey {
-    /// The X.509 certificate
-    pub cert: Certificate,
-    /// The private key corresponding to the public key in the certificate
-    pub key: crate::key::KeyPair,
+    cert: Certificate,
+    key: crate::key::KeyPair,
+}
+
+impl CertificateWithPrivateKey {
+    /// Creates a new `CertificateWithPrivateKey` pairing a certificate with
+    /// its corresponding private key.
+    pub fn new(cert: Certificate, key: KeyPair) -> Self {
+        Self { cert, key }
+    }
+
+    /// Returns a reference to the certificate.
+    pub fn cert(&self) -> &Certificate {
+        &self.cert
+    }
+
+    /// Returns a reference to the private key.
+    pub fn key(&self) -> &KeyPair {
+        &self.key
+    }
+
+    /// Consumes self and returns the certificate and key as a tuple.
+    pub fn into_parts(self) -> (Certificate, KeyPair) {
+        (self.cert, self.key)
+    }
 }
 
 impl Issuer for CertificateWithPrivateKey {
-    fn issuer_name(&self) -> params::DistinguishedName {
+    fn issuer_name(&self) -> Result<params::DistinguishedName> {
         // The name of the issuer is the subject of the certificate
-        let cert_info = self
-            .cert
-            .to_cert_info()
-            .expect("Failed to extract cert info");
-        cert_info.subject
+        let cert_info = self.cert.params()?;
+        Ok(cert_info.subject)
     }
 
     fn signing_key(&self) -> &KeyPair {
         &self.key
-    }
-
-    fn serial_number(&self) -> Vec<u8> {
-        self.cert
-            .inner
-            .tbs_certificate
-            .serial_number
-            .as_bytes()
-            .to_vec()
     }
 }

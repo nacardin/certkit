@@ -20,11 +20,20 @@
 //! ## Key Features
 //!
 //! - **Pure Rust**: Built entirely with rustcrypto libraries
-//! - **Certificate Chain Management**: Create and validate certificate hierarchies
+//! - **Certificate Chain Building**: Create multi-level certificate hierarchies
 //! - **Self-Signed Certificates**: Generate root CA certificates
 //! - **Intermediate CAs**: Support for multi-level certificate authorities
 //! - **X.509 Extensions**: Comprehensive support for standard extensions
 //! - **Format Flexibility**: Import/export in both PEM and DER formats
+//!
+//! ## Scope
+//!
+//! CertKit *builds* and *parses* certificates and keys. It does **not** verify
+//! signatures or perform certificate-path/chain validation, pair it with a
+//! verifier such as [`rustls`]/[`webpki`] when you need to validate a chain.
+//!
+//! [`rustls`]: https://docs.rs/rustls
+//! [`webpki`]: https://docs.rs/webpki
 //!
 //! ## Quick Start
 //!
@@ -33,7 +42,7 @@
 //! ```rust,no_run
 //! use certkit::{
 //!     key::KeyPair,
-//!     cert::{Certificate, params::{CertificationRequestInfo, DistinguishedName}},
+//!     cert::{Certificate, params::{CertificateParams, DistinguishedName}},
 //! };
 //!
 //! # fn main() -> Result<(), certkit::error::CertKitError> {
@@ -47,13 +56,13 @@
 //!     .country("US".to_string())
 //!     .build();
 //!
-//! let cert_info = CertificationRequestInfo::builder()
+//! let cert_info = CertificateParams::builder()
 //!     .subject(subject)
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
 //!     .build();
 //!
 //! // Generate the self-signed certificate
-//! let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+//! let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
 //!
 //! // Export to PEM format
 //! let pem_cert = certificate.to_pem()?;
@@ -67,7 +76,7 @@
 //! ```rust,no_run
 //! use certkit::{
 //!     key::KeyPair,
-//!     cert::{Certificate, CertificateWithPrivateKey, params::{CertificationRequestInfo, DistinguishedName, Validity}},
+//!     cert::{Certificate, CertificateWithPrivateKey, params::{CertificateParams, DistinguishedName, Validity}},
 //!     issuer::Issuer,
 //! };
 //!
@@ -82,30 +91,27 @@
 //!     .organization("Example Corp".to_string())
 //!     .build();
 //!
-//! let ca_cert_info = CertificationRequestInfo::builder()
+//! let ca_cert_info = CertificateParams::builder()
 //!     .subject(ca_subject)
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&ca_key))
 //!     .is_ca(true)
 //!     .build();
 //!
-//! let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key);
-//! let ca_with_key = CertificateWithPrivateKey {
-//!     cert: ca_cert,
-//!     key: ca_key,
-//! };
+//! let ca_cert = Certificate::new_self_signed(&ca_cert_info, &ca_key)?;
+//! let ca_with_key = CertificateWithPrivateKey::new(ca_cert, ca_key);
 //!
 //! // Create server certificate signed by CA
 //! let server_subject = DistinguishedName::builder()
 //!     .common_name("server.example.com".to_string())
 //!     .build();
 //!
-//! let server_cert_info = CertificationRequestInfo::builder()
+//! let server_cert_info = CertificateParams::builder()
 //!     .subject(server_subject)
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&server_key))
 //!     .build();
 //!
-//! let validity = Validity::for_days(365);
-//! let server_cert = ca_with_key.issue(&server_cert_info, validity);
+//! let validity = Validity::for_days(365)?;
+//! let server_cert = ca_with_key.issue(&server_cert_info, validity)?;
 //!
 //! println!("Server certificate issued successfully!");
 //! # Ok(())
@@ -119,7 +125,7 @@
 //!     key::KeyPair,
 //!     cert::{
 //!         Certificate,
-//!         params::{CertificationRequestInfo, DistinguishedName, ExtensionParam},
+//!         params::{CertificateParams, DistinguishedName, ExtensionParam},
 //!         extensions::{SubjectAltName, ExtendedKeyUsage, ExtendedKeyUsageOption, ToAndFromX509Extension},
 //!     },
 //! };
@@ -129,7 +135,8 @@
 //!
 //! // Create Subject Alternative Name extension
 //! let san = SubjectAltName {
-//!     names: vec!["example.com".to_string(), "www.example.com".to_string()],
+//!     dns_names: vec!["example.com".to_string(), "www.example.com".to_string()],
+//!     ..Default::default()
 //! };
 //!
 //! // Create Extended Key Usage extension
@@ -141,16 +148,16 @@
 //!     .common_name("example.com".to_string())
 //!     .build();
 //!
-//! let cert_info = CertificationRequestInfo::builder()
+//! let cert_info = CertificateParams::builder()
 //!     .subject(subject)
 //!     .subject_public_key(certkit::key::PublicKey::from_key_pair(&key_pair))
 //!     .extensions(vec![
-//!         ExtensionParam::from_extension(san, false),
-//!         ExtensionParam::from_extension(eku, true),
+//!         ExtensionParam::from_extension(san, false)?,
+//!         ExtensionParam::from_extension(eku, true)?,
 //!     ])
 //!     .build();
 //!
-//! let certificate = Certificate::new_self_signed(&cert_info, &key_pair);
+//! let certificate = Certificate::new_self_signed(&cert_info, &key_pair)?;
 //! println!("Certificate with extensions created successfully!");
 //! # Ok(())
 //! # }
@@ -193,3 +200,12 @@ pub mod error;
 pub mod issuer;
 pub mod key;
 pub mod tbs_certificate;
+
+/// Initializes `env_logger` for unit tests. Defaults to the `error` level so
+/// the suite is quiet, but `RUST_LOG` still overrides it.
+#[cfg(test)]
+pub(crate) fn init_test_logger() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+        .is_test(true)
+        .try_init();
+}

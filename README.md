@@ -9,11 +9,11 @@ A high-level Rust library providing abstractions over certificates and keys. Thi
 - Create intermediate CAs for certificate hierarchies
 - Support for multiple key types:
   - RSA
-  - ECDSA (P-256)
+  - ECDSA (P-256, P-384, P-521)
   - Ed25519
 - PEM and DER format support
 - Modern Rust implementation with strong type safety
-- Zero-copy parsing and serialization with `der` crate
+- Type-safe parsing and serialization with `der` crate
 
 ## Usage
 
@@ -21,14 +21,57 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-certkit = "0.1.0"
+certkit = "0.2"
 ```
+
+## Cargo features
+
+Each cryptographic algorithm is behind its own feature. All are enabled by default, so the default build is unchanged:
+
+| Feature   | Algorithm        | Default |
+|-----------|------------------|---------|
+| `rsa`     | RSA              | yes     |
+| `p256`    | ECDSA P-256      | yes     |
+| `p384`    | ECDSA P-384      | yes     |
+| `p521`    | ECDSA P-521      | yes     |
+| `ed25519` | Ed25519          | yes     |
+
+To pull in only the algorithms you need, disable the defaults and opt back in. For example, an ECDSA-only build that drops RSA (and its `num-bigint-dig` / `libm` dependency tree):
+
+```toml
+[dependencies]
+certkit = { version = "0.2", default-features = false, features = ["p256", "p384"] }
+```
+
+At least one algorithm feature must be enabled; building with none is a compile error.
+
+## Examples
+
+[`tests/tls_echo.rs`](tests/tls_echo.rs) is a complete, runnable example that exercises the full PKI workflow:
+
+1. Generate a **root CA** (self-signed)
+2. Issue an **intermediate CA** signed by the root
+3. Issue **server** and **client** end-entity certificates from the intermediate
+4. Stand up an **mTLS echo server** with `rustls` and verify a successful round-trip
+
+Run it with:
+
+```sh
+cargo test mtls_echo
+```
+
+## Key formats
+
+| Standard | Supported | Notes |
+|----------|-----------|-------|
+| PKCS #1  | RSA only  | Encoding/decoding RSA public and private keys; RSASSA-PKCS1-v1_5 signatures with SHA-256 |
+| PKCS #8  | ✅ All    | Primary private-key format for every algorithm (RSA, ECDSA, Ed25519). PEM and DER import/export |
 
 ## Dependencies
 
 - `x509-cert`: X.509 certificate handling
 - `der`: ASN.1 DER encoding/decoding
-- `pkcs8`: Private key cryptography standard
+- `pkcs8`: Public-Key Cryptography Standards #8
 - `rsa`, `p256`, `ed25519-dalek`: Cryptographic algorithms
 - `time`: Time handling for certificate validity
 - `pem`: PEM format encoding/decoding
