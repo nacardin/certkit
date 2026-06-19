@@ -1,3 +1,5 @@
+//! Low-level "To Be Signed" certificate structure.
+
 use crate::error::CertKitError;
 use der::Encode;
 use der::asn1::OctetString;
@@ -28,10 +30,10 @@ pub struct TbsCertificate {
     pub signature_algorithm: SignatureAlgorithm,
     /// Certificate issuer distinguished name
     pub issuer: DistinguishedName,
-    /// Not before time (in seconds since Unix epoch)
-    pub not_before: time::OffsetDateTime,
-    /// Not after time (in seconds since Unix epoch)
-    pub not_after: time::OffsetDateTime,
+    /// Start of the certificate's validity period
+    pub not_before: x509_cert::time::Time,
+    /// End of the certificate's validity period
+    pub not_after: x509_cert::time::Time,
     /// Certificate subject distinguished name
     pub subject: DistinguishedName,
     /// Subject's public key
@@ -41,41 +43,8 @@ pub struct TbsCertificate {
 }
 
 impl TbsCertificate {
-    /// Creates a new `TbsCertificate` with default values.
-    ///
-    /// # Arguments
-    /// * `issuer` - The distinguished name of the certificate issuer.
-    /// * `subject` - The distinguished name of the certificate subject.
-    /// * `subject_public_key` - The public key of the certificate subject.
-    /// * `signature_algorithm` - The algorithm used to sign the certificate.
-    /// * `extensions` - Additional X.509 extensions for the certificate.
-    pub fn new(
-        issuer: DistinguishedName,
-        subject: DistinguishedName,
-        subject_public_key: PublicKey,
-        signature_algorithm: SignatureAlgorithm,
-        extensions: Vec<ExtensionParam>,
-    ) -> Self {
-        let not_before = time::OffsetDateTime::now_utc();
-        let not_after = not_before + time::Duration::days(365);
-
-        Self {
-            serial_number: vec![1],
-            signature_algorithm,
-            issuer,
-            not_before,
-            not_after,
-            subject,
-            subject_public_key,
-            extensions,
-        }
-    }
-
     /// Converts the `TbsCertificate` into a `TbsCertificateInner` for DER encoding.
-    ///
-    /// # Returns
-    /// A `TbsCertificateInner` object suitable for DER encoding.
-    pub fn to_tbs_certificate_inner(&self) -> TbsCertificateInner {
+    pub fn to_tbs_certificate_inner(&self) -> Result<TbsCertificateInner, CertKitError> {
         // Convert to x509_cert's format
         let algorithm_id: x509_cert::spki::AlgorithmIdentifierOwned =
             self.signature_algorithm.clone().into();
@@ -84,72 +53,40 @@ impl TbsCertificate {
         let extensions = self
             .extensions
             .iter()
-            .map(|ext| x509_cert::ext::Extension {
-                extn_id: ext.oid,
-                critical: ext.critical,
-                extn_value: OctetString::new(ext.value.clone()).unwrap(),
+            .map(|ext| {
+                Ok(x509_cert::ext::Extension {
+                    extn_id: ext.oid,
+                    critical: ext.critical,
+                    extn_value: OctetString::new(ext.value.clone()).map_err(|e| {
+                        CertKitError::EncodingError(format!("extension value: {e}"))
+                    })?,
+                })
             })
-            .collect::<Vec<_>>();
-
-        // Create validity
-        let not_before = x509_cert::time::Time::UtcTime(
-            der::asn1::UtcTime::from_system_time(self.not_before.into()).unwrap(),
-        );
-        let not_after = x509_cert::time::Time::UtcTime(
-            der::asn1::UtcTime::from_system_time(self.not_after.into()).unwrap(),
-        );
+            .collect::<Result<Vec<_>, CertKitError>>()?;
 
         let validity = x509_cert::time::Validity {
-            not_before,
-            not_after,
+            not_before: self.not_before,
+            not_after: self.not_after,
         };
 
-        // Create SerialNumber
-        let serial_number = SerialNumber::new(self.serial_number.as_slice()).unwrap();
+        let serial_number = SerialNumber::new(self.serial_number.as_slice())
+            .map_err(|e| CertKitError::InvalidInput(format!("invalid serial number: {e}")))?;
 
         // Convert the subject public key to SPKI format
-        let subject_public_key_info = match &self.subject_public_key {
-            #[cfg(feature = "rsa")]
-            PublicKey::Rsa(public) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(public.clone()).unwrap()
-            }
-            #[cfg(feature = "p256")]
-            PublicKey::EcdsaP256(verifying_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
-            }
-            #[cfg(feature = "p384")]
-            PublicKey::EcdsaP384(verifying_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
-            }
-            #[cfg(feature = "p521")]
-            PublicKey::EcdsaP521(verifying_key) => {
-                x509_cert::spki::SubjectPublicKeyInfoOwned::from_key(*verifying_key).unwrap()
-            }
-            #[cfg(feature = "ed25519")]
-            PublicKey::Ed25519(verifying_key) => {
-                let pk_bytes = verifying_key.to_bytes();
-                x509_cert::spki::SubjectPublicKeyInfoOwned {
-                    algorithm: x509_cert::spki::AlgorithmIdentifierOwned {
-                        oid: const_oid::ObjectIdentifier::new_unwrap("1.3.101.112"),
-                        parameters: None,
-                    },
-                    subject_public_key: der::asn1::BitString::from_bytes(&pk_bytes).unwrap(),
-                }
-            }
-        };
+        let subject_public_key_info = self.subject_public_key.as_spki();
 
-        TbsCertificateInner {
+        Ok(TbsCertificateInner {
             version: Version::V3,
             serial_number,
             signature: algorithm_id,
-            issuer: self.issuer.as_x509_name(),
+            issuer: self.issuer.as_x509_name()?,
             validity,
-            subject: self.subject.as_x509_name(),
+            subject: self.subject.as_x509_name()?,
             subject_public_key_info,
             issuer_unique_id: None,
             subject_unique_id: None,
             extensions: Some(extensions),
-        }
+        })
     }
 
     /// Creates a `TbsCertificate` from a `TbsCertificateInner`.
@@ -161,8 +98,8 @@ impl TbsCertificate {
     /// A `TbsCertificate` object.
     pub fn from_tbs_certificate_inner(inner: TbsCertificateInner) -> Result<Self, CertKitError> {
         // Convert from x509_cert's format
-        let issuer = DistinguishedName::from_x509_name(&inner.issuer);
-        let subject = DistinguishedName::from_x509_name(&inner.subject);
+        let issuer = DistinguishedName::from_x509_name(&inner.issuer)?;
+        let subject = DistinguishedName::from_x509_name(&inner.subject)?;
         let subject_public_key = PublicKey::from_x509spki(&inner.subject_public_key_info)?;
 
         // Convert extensions
@@ -177,28 +114,15 @@ impl TbsCertificate {
             })
             .collect::<Vec<_>>();
 
-        // Get timestamps from validity
-        let not_before = match inner.validity.not_before {
-            x509_cert::time::Time::UtcTime(ut) => time::OffsetDateTime::from(ut.to_system_time()),
-            x509_cert::time::Time::GeneralTime(gt) => {
-                time::OffsetDateTime::from(gt.to_system_time())
-            }
-        };
-
-        let not_after = match inner.validity.not_after {
-            x509_cert::time::Time::UtcTime(ut) => time::OffsetDateTime::from(ut.to_system_time()),
-            x509_cert::time::Time::GeneralTime(gt) => {
-                time::OffsetDateTime::from(gt.to_system_time())
-            }
-        };
-
         // Determine signature algorithm based on OID
         let signature_algorithm = match inner.signature.oid {
             const_oid::db::rfc5912::SHA_256_WITH_RSA_ENCRYPTION => {
                 SignatureAlgorithm::Sha256WithRSA
             }
             const_oid::db::rfc5912::ECDSA_WITH_SHA_256 => SignatureAlgorithm::Sha256WithECDSA,
-            const_oid::db::rfc8410::ID_ED_25519 => SignatureAlgorithm::Sha256WithEdDSA,
+            const_oid::db::rfc5912::ECDSA_WITH_SHA_384 => SignatureAlgorithm::Sha384WithECDSA,
+            const_oid::db::rfc5912::ECDSA_WITH_SHA_512 => SignatureAlgorithm::Sha512WithECDSA,
+            const_oid::db::rfc8410::ID_ED_25519 => SignatureAlgorithm::Ed25519,
             _ => {
                 return Err(CertKitError::DecodingError(
                     "Unsupported signature algorithm".to_string(),
@@ -210,8 +134,8 @@ impl TbsCertificate {
             serial_number: inner.serial_number.as_bytes().into(),
             signature_algorithm,
             issuer,
-            not_before,
-            not_after,
+            not_before: inner.validity.not_before,
+            not_after: inner.validity.not_after,
             subject,
             subject_public_key,
             extensions,
@@ -222,7 +146,59 @@ impl TbsCertificate {
     ///
     /// # Returns
     /// A byte vector containing the DER-encoded certificate.
-    pub fn to_der(&self) -> Result<Vec<u8>, der::Error> {
-        self.to_tbs_certificate_inner().to_der()
+    pub fn to_der(&self) -> Result<Vec<u8>, CertKitError> {
+        self.to_tbs_certificate_inner()?
+            .to_der()
+            .map_err(|e| CertKitError::EncodingError(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cert::Certificate;
+    use crate::cert::params::{CertificateParams, DistinguishedName};
+    use crate::key::{KeyPair, PublicKey};
+
+    fn self_signed(key: &KeyPair) -> Certificate {
+        let request = CertificateParams::builder()
+            .subject(
+                DistinguishedName::builder()
+                    .common_name("parse.test".to_string())
+                    .build(),
+            )
+            .subject_public_key(PublicKey::from_key_pair(key))
+            .build();
+        Certificate::new_self_signed(&request, key).unwrap()
+    }
+
+    // The OID -> SignatureAlgorithm parse path must recognize the per-curve ECDSA
+    // OIDs; P-384/P-521 certificates previously failed to parse with
+    // "Unsupported signature algorithm".
+
+    #[cfg(feature = "p384")]
+    #[test]
+    fn parses_ecdsa_p384_signature_algorithm() {
+        let cert = self_signed(&KeyPair::generate_ecdsa_p384());
+        let parsed =
+            TbsCertificate::from_tbs_certificate_inner(cert.inner().tbs_certificate.clone())
+                .expect("a P-384 certificate must parse");
+        assert!(matches!(
+            parsed.signature_algorithm,
+            SignatureAlgorithm::Sha384WithECDSA
+        ));
+    }
+
+    #[cfg(feature = "p521")]
+    #[test]
+    fn parses_ecdsa_p521_signature_algorithm() {
+        let cert = self_signed(&KeyPair::generate_ecdsa_p521());
+        let parsed =
+            TbsCertificate::from_tbs_certificate_inner(cert.inner().tbs_certificate.clone())
+                .expect("a P-521 certificate must parse");
+        assert!(matches!(
+            parsed.signature_algorithm,
+            SignatureAlgorithm::Sha512WithECDSA
+        ));
     }
 }

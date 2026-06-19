@@ -1,9 +1,10 @@
 [package]
 name = "certkit"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-description = "A pure Rust library for X.509 certificate management, creation, and validation, supporting RSA, ECDSA, and Ed25519 keys, with no OpenSSL or ring dependencies."
+description = "A pure Rust library for X.509 certificate creation, parsing, and management, supporting RSA, ECDSA, and Ed25519 keys, with no OpenSSL or ring dependencies."
 repository = "https://github.com/nacardin/certkit.git"
 homepage = "https://github.com/nacardin/certkit"
 documentation = "https://docs.rs/certkit"
@@ -13,33 +14,29 @@ categories = ["cryptography", "authentication"]
 authors = ["Nick Cardin <nick@cardin.email>"]
 
 [features]
-default = ["rsa", "p256", "p384", "p521","ed25519"]
-p521 = ["p384", "dep:p521", "ecdsa"] #For some reason p521 does not compile without p384...
-ed25519 = ["ed25519-dalek"]
+default = ["rsa", "p256", "p384", "p521", "ed25519"]
+ed25519 = ["dep:ed25519-dalek"]
 
 
 [dependencies]
 bon = "3"
 const-oid = { version = "0.9.6", features = ["db"] }
-rsa = { version = "0.9", optional = true }
+der = "0.7"
+ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8", "pem"], optional = true }
+log = "0.4"
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p384 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
 p521 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
-ecdsa = { version = "0.16", features = ["verifying"], optional = true }
-ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8", "pem"], optional = true}
-sha2 = { version = "0.10", default-features = false, features = ["oid"] }
-rand_core = { version = "0.6", features = ["getrandom"]}
-der = "0.7"
-time = "0.3"
 pem = "3"
-x509-cert = "0.2.5"
-pkcs8 = { version = "0.10.2", features = ["alloc", "pem"] }
-rand = "0.9.1"
-base64 = "0.22.1"
+pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+rsa = { version = "0.9", optional = true }
 sha1 = "0.10"
-thiserror = "1.0"
-regex = "1.7"
+sha2 = { version = "0.10", default-features = false, features = ["oid"] }
+thiserror = "2"
+time = "0.3"
+x509-cert = "0.2"
 
 [dev-dependencies]
-openssl = { version = "0.10" }
-botan = { version = "0.11", features = ["vendored"] }
+env_logger = "0.11"
+rustls = "0.23"
