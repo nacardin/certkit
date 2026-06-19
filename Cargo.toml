@@ -1,3 +1,7 @@
+[workspace]
+members = ["certkit-cli"]
+resolver = "2"
+
 [package]
 name = "certkit"
 version = "0.2.0"

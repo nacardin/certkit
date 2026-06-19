@@ -1,0 +1,32 @@
+[package]
+name = "certkit-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "Command-line interface for certkit: generate keys and X.509 certificates."
+repository = "https://github.com/nacardin/certkit.git"
+homepage = "https://github.com/nacardin/certkit"
+readme = "README.md"
+keywords = ["x509", "certificate", "cli", "pki", "tls"]
+categories = ["cryptography", "command-line-utilities"]
+authors = ["Nick Cardin <nick@cardin.email>"]
+
+[[bin]]
+name = "certkit"
+path = "src/main.rs"
+
+[dependencies]
+certkit = { path = "..", version = "0.2.0" }
+clap = { version = "4", features = ["derive"] }
+const-oid = { version = "0.9", features = ["db"] }
+der = "0.7"
+env_logger = "0.11"
+log = "0.4"
+rsa = "0.9"
+sha2 = "0.10"
+time = "0.3"
+x509-cert = "0.2.5"
+
+[dev-dependencies]
+tempfile = "3"
