@@ -56,14 +56,3 @@ cat cert.pem | certkit cert_info -
 ```
 
 Run `certkit <command> --help` for the full set of options.
-
-## Algorithms
-
-`--algorithm` (alias `--algo`, short `-a`) accepts `RSA`, `ECDSA`, and
-`Ed25519` (case-insensitive). The key shape is set with `--params`, following
-Botan:
-
-- `--algo RSA --params 3072` — RSA key size in bits (default 2048).
-- `--algo ECDSA --params secp256r1` — curve `secp256r1`, `secp384r1`, or
-  `secp521r1` (default `secp256r1`).
-- `--algo Ed25519` — no parameters.

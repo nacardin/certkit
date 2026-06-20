@@ -1,15 +1,13 @@
-//! `gen_self_signed` — create a self-signed certificate (optionally a CA).
-
+use anyhow::Result;
 use clap::Args;
 use time::{Duration, OffsetDateTime};
 
 use certkit::cert::Certificate;
 
-use crate::Result;
 use crate::args::{CertOptArgs, DnArgs, KeySourceArgs};
-use crate::certs::cert_info;
 use crate::io::{emit, guard_stdout_clash};
 use crate::keys::key_pair;
+use crate::params::cert_info;
 
 #[derive(Args)]
 pub struct SelfSignedOpt {

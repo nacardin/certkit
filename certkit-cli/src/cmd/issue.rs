@@ -1,8 +1,7 @@
-//! `issue` — issue a certificate signed by an existing CA.
-
 use std::fs;
 use std::path::PathBuf;
 
+use anyhow::Result;
 use clap::Args;
 
 use certkit::cert::CertificateWithPrivateKey;
@@ -10,11 +9,10 @@ use certkit::cert::params::Validity;
 use certkit::issuer::Issuer;
 use certkit::key::KeyPair;
 
-use crate::Result;
 use crate::args::{CertOptArgs, DnArgs, KeySourceArgs};
-use crate::certs::{cert_info, load_ca_cert};
-use crate::io::{emit, guard_stdout_clash};
+use crate::io::{emit, guard_stdout_clash, load_ca_cert};
 use crate::keys::key_pair;
+use crate::params::cert_info;
 
 #[derive(Args)]
 pub struct IssueOpt {

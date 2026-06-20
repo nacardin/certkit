@@ -1,10 +1,8 @@
-//! `keygen` — generate a private key and write it as PKCS#8 PEM.
-
 use std::path::PathBuf;
 
+use anyhow::Result;
 use clap::Args;
 
-use crate::Result;
 use crate::args::{Algorithm, KeyParams};
 use crate::io::write_bytes;
 use crate::keys::generate;
@@ -14,8 +12,7 @@ pub struct KeygenOpt {
     /// Key algorithm (RSA, ECDSA, or Ed25519).
     #[arg(short, long, alias = "algo", value_enum, ignore_case = true, default_value_t = Algorithm::Ecdsa)]
     pub algorithm: Algorithm,
-    /// Key parameters: RSA size in bits (default 2048) or ECDSA curve
-    /// (secp256r1, secp384r1, secp521r1; default secp256r1). Ignored for Ed25519.
+    /// Key parameters: RSA bits (default 2048) or ECDSA curve (default secp256r1). Ignored for Ed25519.
     #[arg(long)]
     pub params: Option<KeyParams>,
     /// Write the key here instead of stdout.

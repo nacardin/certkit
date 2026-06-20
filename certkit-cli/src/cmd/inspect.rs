@@ -1,13 +1,11 @@
-//! `cert_info` — parse a certificate and print its fields.
-
 use std::io::Write;
 use std::path::PathBuf;
 
+use anyhow::Result;
 use clap::Args;
 
 use certkit::cert::Certificate;
 
-use crate::Result;
 use crate::io::read_cert_input;
 use crate::report::CertReport;
 

@@ -1,27 +1,17 @@
-//! Obtaining the subject key pair from the command line.
-//!
-//! [`generate`] turns an [`Algorithm`] plus `--params` into a fresh [`KeyPair`],
-//! and [`key_pair`] either loads an existing key (`--key`) or generates one.
-
 use std::fs;
 
+use anyhow::{Result, bail};
 use certkit::key::KeyPair;
 
-use crate::Result;
 use crate::args::{Algorithm, Curve, KeyParams, KeySourceArgs};
 
-/// Generates a key pair for the requested algorithm and `--params`.
-///
-/// `--params` is parsed (and curve names normalized) when the arguments are
-/// read, so here it only remains to reject a parameter that doesn't match the
-/// chosen algorithm — e.g. a curve for RSA, or a key size for ECDSA.
 pub fn generate(algorithm: Algorithm, params: Option<KeyParams>) -> Result<KeyPair> {
     match algorithm {
         Algorithm::Rsa => {
             let bits = match params {
                 Some(KeyParams::Bits(bits)) => bits as usize,
                 Some(KeyParams::Curve(_)) => {
-                    return Err("RSA takes a key size, not a curve; e.g. --params 2048".into());
+                    bail!("RSA takes a key size, not a curve; e.g. --params 2048");
                 }
                 None => 2048,
             };
@@ -31,9 +21,7 @@ pub fn generate(algorithm: Algorithm, params: Option<KeyParams>) -> Result<KeyPa
             let curve = match params {
                 Some(KeyParams::Curve(curve)) => curve,
                 Some(KeyParams::Bits(_)) => {
-                    return Err(
-                        "ECDSA takes a curve, not a key size; e.g. --params secp256r1".into(),
-                    );
+                    bail!("ECDSA takes a curve, not a key size; e.g. --params secp256r1");
                 }
                 None => Curve::P256,
             };
@@ -47,7 +35,7 @@ pub fn generate(algorithm: Algorithm, params: Option<KeyParams>) -> Result<KeyPa
     }
 }
 
-/// Loads the key from `--key`, or generates one. Returns `(key, generated)`.
+/// Returns `(key, generated)` where `generated` is true when the key was freshly created.
 pub fn key_pair(args: &KeySourceArgs) -> Result<(KeyPair, bool)> {
     match &args.key {
         Some(path) => Ok((

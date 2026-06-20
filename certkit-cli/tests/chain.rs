@@ -8,7 +8,7 @@
 //! and field checks. The mixed-algorithm case additionally proves a CA of one
 //! algorithm can sign a subject of another.
 
-mod common;
+pub mod common;
 
 use std::process::Command;
 

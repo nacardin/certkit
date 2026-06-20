@@ -1,22 +1,11 @@
-//! Shared command-line argument types.
-//!
-//! These are the clap derive pieces reused across subcommands: the value enums
-//! describing algorithms and output formats, and the `Args` groups
-//! ([`DnArgs`], [`KeySourceArgs`], [`CertOptArgs`]) flattened into the
-//! certificate subcommands. Each subcommand's own options struct lives with its
-//! handler under [`cmd`](crate::cmd). Fields are `pub` so those handlers
-//! and their helpers can read them.
-
 use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
 
 use certkit::cert::extensions::ExtendedKeyUsageOption;
 
-/// Key algorithm, named as Botan's `keygen --algo` expects.
-///
-/// The key shape (RSA size, ECDSA curve) is selected with `--params`, also
-/// following Botan: `--params 2048` for RSA, `--params secp256r1` for ECDSA.
+/// Named to match Botan's `keygen --algo`.
+/// Key shape (RSA size, ECDSA curve) is selected with `--params`.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum Algorithm {
     #[value(name = "RSA")]
@@ -27,17 +16,13 @@ pub enum Algorithm {
     Ed25519,
 }
 
-/// Key parameters chosen with `--params`, disambiguated by value: a bare number
-/// is an RSA key size, anything else is an ECDSA curve name (as in Botan).
+/// A bare number is RSA bits, anything else is an ECDSA curve name.
 #[derive(Copy, Clone, Debug)]
 pub enum KeyParams {
-    /// RSA modulus size in bits.
     Bits(u32),
-    /// ECDSA curve.
     Curve(Curve),
 }
 
-/// A NIST/SECG curve certkit can generate.
 #[derive(Copy, Clone, Debug)]
 pub enum Curve {
     P256,
@@ -67,14 +52,12 @@ impl std::str::FromStr for KeyParams {
     }
 }
 
-/// Output encoding for certificates.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum CertFormat {
     Pem,
     Der,
 }
 
-/// Extended Key Usage purposes that can be requested for a certificate.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum EkuOpt {
     ServerAuth,
@@ -98,7 +81,6 @@ impl From<EkuOpt> for ExtendedKeyUsageOption {
     }
 }
 
-/// Subject distinguished name fields, shared by the certificate subcommands.
 #[derive(Args)]
 pub struct DnArgs {
     /// Subject common name (CN), given positionally (as in Botan).
@@ -121,15 +103,12 @@ pub struct DnArgs {
     pub organization_unit: Option<String>,
 }
 
-/// How to obtain the subject key pair, shared by the certificate subcommands.
 #[derive(Args)]
 pub struct KeySourceArgs {
     /// Algorithm for a freshly generated key (ignored when `--key` is given).
     #[arg(short, long, alias = "algo", value_enum, ignore_case = true, default_value_t = Algorithm::Ecdsa)]
     pub algorithm: Algorithm,
-    /// Key parameters for a freshly generated key: RSA size in bits (default
-    /// 2048) or ECDSA curve (secp256r1, secp384r1, secp521r1; default
-    /// secp256r1). Ignored for Ed25519 and when `--key` is given.
+    /// Key parameters: RSA bits (default 2048) or ECDSA curve (default secp256r1). Ignored for Ed25519 and when `--key` is given.
     #[arg(long)]
     pub params: Option<KeyParams>,
     /// Use an existing private key (PKCS#8 PEM) instead of generating one.
@@ -140,7 +119,6 @@ pub struct KeySourceArgs {
     pub key_out: Option<PathBuf>,
 }
 
-/// Extension, validity, and output options, shared by the certificate subcommands.
 #[derive(Args)]
 pub struct CertOptArgs {
     /// DNS Subject Alternative Name (repeatable).

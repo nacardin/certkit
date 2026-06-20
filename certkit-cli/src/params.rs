@@ -1,20 +1,15 @@
-use std::fs;
-use std::path::Path;
-
+use anyhow::{Result, anyhow};
 use der::Encode;
 use der::asn1::Ia5String;
 use x509_cert::ext::pkix;
 use x509_cert::ext::pkix::name::GeneralName;
 
-use certkit::cert::Certificate;
 use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName, ToAndFromX509Extension};
 use certkit::cert::params::{CertificateParams, DistinguishedName, ExtensionParam};
 use certkit::key::{KeyPair, PublicKey};
 
-use crate::Result;
 use crate::args::{CertOptArgs, DnArgs};
 
-/// Builds the certification request info from the DN, key, and options.
 pub fn cert_info(dn: &DnArgs, key: &KeyPair, opts: &CertOptArgs) -> Result<CertificateParams> {
     let subject = DistinguishedName::builder()
         .common_name(dn.common_name.clone())
@@ -41,11 +36,8 @@ pub fn cert_info(dn: &DnArgs, key: &KeyPair, opts: &CertOptArgs) -> Result<Certi
         .build())
 }
 
-/// Builds a Subject Alternative Name extension from DNS and email entries.
-///
-/// certkit's own `SubjectAltName` only models DNS names, so the extension is
-/// assembled directly from `x509_cert` general names to also carry rfc822
-/// (email) entries, then wrapped as a raw `ExtensionParam`.
+/// certkit's `SubjectAltName` only models DNS names, so we assemble the extension
+/// directly from x509_cert GeneralNames to also carry rfc822 (email) entries.
 fn build_san(dns: &[String], email: &[String]) -> Result<Option<ExtensionParam>> {
     if dns.is_empty() && email.is_empty() {
         return Ok(None);
@@ -54,12 +46,12 @@ fn build_san(dns: &[String], email: &[String]) -> Result<Option<ExtensionParam>>
     let mut names = Vec::new();
     for name in dns {
         let ia5 =
-            Ia5String::try_from(name.clone()).map_err(|_| format!("invalid DNS name: {name}"))?;
+            Ia5String::try_from(name.clone()).map_err(|_| anyhow!("invalid DNS name: {name}"))?;
         names.push(GeneralName::DnsName(ia5));
     }
     for addr in email {
         let ia5 = Ia5String::try_from(addr.clone())
-            .map_err(|_| format!("invalid email address: {addr}"))?;
+            .map_err(|_| anyhow!("invalid email address: {addr}"))?;
         names.push(GeneralName::Rfc822Name(ia5));
     }
 
@@ -69,9 +61,4 @@ fn build_san(dns: &[String], email: &[String]) -> Result<Option<ExtensionParam>>
         critical: false,
         value: san.to_der()?,
     }))
-}
-
-/// Loads a CA certificate from a PEM or DER file (auto-detected).
-pub fn load_ca_cert(path: &Path) -> Result<Certificate> {
-    Ok(Certificate::from_bytes(&fs::read(path)?)?)
 }

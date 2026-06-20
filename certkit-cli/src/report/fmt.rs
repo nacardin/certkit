@@ -1,15 +1,8 @@
-//! Low-level formatting primitives shared by the report renderers.
-//!
-//! These turn raw bytes, OIDs, and strings into the human- and JSON-friendly
-//! fragments that [`super`] and [`super::extensions`] assemble into output.
-
 use const_oid::ObjectIdentifier;
 use const_oid::db::{rfc5280, rfc5912, rfc8410};
 
-/// Placeholder shown when an extension's value cannot be DER-decoded.
 pub(super) const UNDECODABLE: &str = "(undecodable)";
 
-/// Lowercase hex with colon separators, e.g. `9f:86:d0`.
 pub(super) fn hex_colons(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -18,7 +11,6 @@ pub(super) fn hex_colons(bytes: &[u8]) -> String {
         .join(":")
 }
 
-/// Formats raw IP-address octets: dotted-quad for v4, colon-hex for v6.
 pub(super) fn format_ip(octets: &[u8]) -> String {
     match octets.len() {
         4 => octets
@@ -35,12 +27,8 @@ pub(super) fn format_ip(octets: &[u8]) -> String {
     }
 }
 
-/// Maps an OID to a friendly name.
-///
-/// Known Extended Key Usage purposes and signature algorithms get a curated
-/// short name; the OID identity comes from const-oid's named constants rather
-/// than dotted-string literals. For anything else, we fall back to const-oid's
-/// name database (e.g. `id-ecPublicKey`), and finally to the bare OID.
+/// OID-to-name mapping. Uses const-oid named constants so OID values and their
+/// decoders can never drift apart. Falls back to const-oid's DB, then bare OID.
 pub(super) fn describe_oid(oid: ObjectIdentifier) -> String {
     let name = if oid == rfc5280::ID_KP_SERVER_AUTH {
         "serverAuth"
@@ -78,7 +66,6 @@ pub(super) fn describe_oid(oid: ObjectIdentifier) -> String {
     name.to_string()
 }
 
-/// Joins parts with commas, or reports `(none)` when empty.
 pub(super) fn join_or_none<S: AsRef<str>>(parts: &[S]) -> String {
     if parts.is_empty() {
         "(none)".to_string()
@@ -89,23 +76,4 @@ pub(super) fn join_or_none<S: AsRef<str>>(parts: &[S]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     }
-}
-
-/// Encodes a string as a JSON string literal (quotes + minimal escaping).
-pub(super) fn json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }

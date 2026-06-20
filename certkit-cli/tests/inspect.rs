@@ -2,23 +2,14 @@
 //! `certkit cert_info` reports their fields. The fingerprint is cross-checked
 //! against `botan` when it is installed, so the two tools must agree.
 
+pub mod common;
+
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use common::certkit;
 use tempfile::tempdir;
-
-/// A `Command` for the `certkit` binary under test.
-///
-/// Defaults the binary's logging to `error` for quiet output, while still
-/// honoring an explicit `RUST_LOG` so `RUST_LOG=debug cargo test` surfaces logs.
-fn certkit() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_certkit"));
-    if std::env::var_os("RUST_LOG").is_none() {
-        cmd.env("RUST_LOG", "error");
-    }
-    cmd
-}
 
 /// Writes a self-signed P-256 leaf (with SANs and EKUs) to `dir`, returning its path.
 fn write_leaf(dir: &Path) -> std::path::PathBuf {

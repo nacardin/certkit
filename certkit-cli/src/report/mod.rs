@@ -1,13 +1,8 @@
-//! Rendering a parsed certificate for the `cert_info` subcommand.
-//!
-//! [`CertReport`] is a flat, render-ready view of the fields `cert_info`
-//! reports. [`CertReport::from_cert`] decodes an [`X509Certificate`] into it
-//! (delegating extension decoding to [`extensions`] and byte/OID formatting to
-//! [`fmt`]), and [`CertReport::to_text`]/[`CertReport::to_json`] render it.
-
 mod extensions;
 mod fmt;
 
+use anyhow::Result;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use x509_cert::Certificate as X509Certificate;
@@ -15,11 +10,10 @@ use x509_cert::Certificate as X509Certificate;
 use certkit::cert::Certificate;
 use certkit::key::PublicKey;
 
-use crate::Result;
 use extensions::describe_extension;
-use fmt::{describe_oid, hex_colons, json_string};
+use fmt::{describe_oid, hex_colons};
 
-/// A decoded extension, ready to render in either output format.
+#[derive(Serialize)]
 struct ExtReport {
     oid: String,
     name: &'static str,
@@ -27,7 +21,7 @@ struct ExtReport {
     summary: String,
 }
 
-/// The fields of a certificate that `cert_info` reports.
+#[derive(Serialize)]
 pub struct CertReport {
     subject: String,
     issuer: String,
@@ -127,49 +121,12 @@ impl CertReport {
     }
 
     pub fn to_json(&self) -> String {
-        let fingerprint = match &self.fingerprint_sha256 {
-            Some(fp) => json_string(fp),
-            None => "null".to_string(),
-        };
-        let extensions: Vec<String> = self
-            .extensions
-            .iter()
-            .map(|ext| {
-                format!(
-                    "{{\"oid\":{},\"name\":{},\"critical\":{},\"summary\":{}}}",
-                    json_string(&ext.oid),
-                    json_string(ext.name),
-                    ext.critical,
-                    json_string(&ext.summary),
-                )
-            })
-            .collect();
-
-        format!(
-            concat!(
-                "{{\"subject\":{},\"issuer\":{},\"serial\":{},",
-                "\"not_before\":{},\"not_after\":{},\"expired\":{},",
-                "\"not_yet_valid\":{},\"days_remaining\":{},\"public_key\":{},",
-                "\"signature_algorithm\":{},\"fingerprint_sha256\":{},",
-                "\"extensions\":[{}]}}\n"
-            ),
-            json_string(&self.subject),
-            json_string(&self.issuer),
-            json_string(&self.serial),
-            json_string(&self.not_before),
-            json_string(&self.not_after),
-            self.expired,
-            self.not_yet_valid,
-            self.days_remaining,
-            json_string(&self.public_key),
-            json_string(&self.signature_algorithm),
-            fingerprint,
-            extensions.join(","),
-        )
+        let mut out = serde_json::to_string(self).expect("CertReport is always serializable");
+        out.push('\n');
+        out
     }
 }
 
-/// Names the subject's public key algorithm (and size, for RSA).
 fn describe_public_key(spki: &x509_cert::spki::SubjectPublicKeyInfoOwned) -> String {
     match PublicKey::from_x509spki(spki) {
         Ok(PublicKey::Rsa(key)) => {

@@ -1,10 +1,3 @@
-//! Decoding X.509 extensions into renderable summaries.
-//!
-//! [`describe_extension`] dispatches on the extension OID to one of the
-//! per-extension summarizers below, each of which DER-decodes the value and
-//! produces a short human-readable string (falling back to
-//! [`UNDECODABLE`](super::fmt) when decoding fails).
-
 use der::Decode;
 use der::oid::AssociatedOid;
 use x509_cert::ext::pkix;
@@ -13,12 +6,8 @@ use x509_cert::ext::pkix::name::GeneralName;
 use super::ExtReport;
 use super::fmt::{UNDECODABLE, describe_oid, format_ip, hex_colons, join_or_none};
 
-/// Decodes a single extension into a renderable summary.
-///
-/// Each arm matches the extension's OID against the [`AssociatedOid::OID`] of
-/// the very type used to decode it, so the OID and its decoder can never drift
-/// apart. `ObjectIdentifier` isn't usable in `match` patterns, hence the
-/// `if`/`else if` chain.
+/// Each arm matches via `AssociatedOid::OID` so the OID and its decoder stay in
+/// sync. `ObjectIdentifier` isn't usable in match patterns, hence the if/else chain.
 pub(super) fn describe_extension(ext: &x509_cert::ext::Extension) -> ExtReport {
     let value = ext.extn_value.as_bytes();
     let oid = ext.extn_id;
@@ -102,7 +91,6 @@ fn aki_summary(value: &[u8]) -> String {
     }
 }
 
-/// Renders a `GeneralName` for the SAN summary.
 fn general_name(name: &GeneralName) -> String {
     match name {
         GeneralName::DnsName(s) => format!("DNS:{s}"),
