@@ -11,8 +11,8 @@ use crate::report::CertReport;
 
 #[derive(Args)]
 pub struct InspectOpt {
-    /// Certificate to read (PEM or DER, auto-detected). Omit or `-` for stdin.
-    pub input: Option<PathBuf>,
+    /// Certificate file to read (PEM or DER, auto-detected). Use `-` for stdin.
+    pub input: PathBuf,
     /// Also print the SHA-256 fingerprint of the DER encoding.
     #[arg(long)]
     pub fingerprint: bool,
@@ -23,12 +23,7 @@ pub struct InspectOpt {
 
 impl InspectOpt {
     pub fn execute(&self) -> Result<()> {
-        let source = self
-            .input
-            .as_deref()
-            .filter(|p| p.as_os_str() != "-")
-            .map_or_else(|| "stdin".to_string(), |p| p.display().to_string());
-        log::debug!("inspecting certificate from {source}");
+        log::debug!("inspecting certificate from {}", self.input.display());
 
         let bytes = read_cert_input(&self.input)?;
         let cert = Certificate::from_bytes(&bytes)?;

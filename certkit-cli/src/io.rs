@@ -8,14 +8,13 @@ use certkit::key::KeyPair;
 
 use crate::args::{CertFormat, CertOptArgs};
 
-pub fn read_cert_input(path: &Option<PathBuf>) -> Result<Vec<u8>> {
-    match path.as_deref().filter(|p| p.as_os_str() != "-") {
-        Some(path) => Ok(fs::read(path)?),
-        None => {
-            let mut buf = Vec::new();
-            std::io::stdin().lock().read_to_end(&mut buf)?;
-            Ok(buf)
-        }
+pub fn read_cert_input(path: &std::path::Path) -> Result<Vec<u8>> {
+    if path.as_os_str() == "-" {
+        let mut buf = Vec::new();
+        std::io::stdin().lock().read_to_end(&mut buf)?;
+        Ok(buf)
+    } else {
+        Ok(fs::read(path)?)
     }
 }
 
