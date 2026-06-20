@@ -99,10 +99,8 @@ impl DistinguishedName {
         ];
 
         for (oid, value) in optional_attrs {
-            if let Some(value) = value {
-                if !value.is_empty() {
-                    rdns.push(dn_rdn(oid, value)?);
-                }
+            if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
+                rdns.push(dn_rdn(oid, value)?);
             }
         }
 
