@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -7,10 +6,9 @@ use clap::Args;
 use certkit::cert::CertificateWithPrivateKey;
 use certkit::cert::params::Validity;
 use certkit::issuer::Issuer;
-use certkit::key::KeyPair;
 
 use crate::args::{CertOptArgs, DnArgs, KeySourceArgs};
-use crate::io::{emit, guard_stdout_clash, load_ca_cert};
+use crate::io::{emit, guard_stdout_clash, load_ca_cert, load_key};
 use crate::keys::key_pair;
 use crate::params::cert_info;
 
@@ -46,7 +44,7 @@ impl IssueOpt {
             self.ca_key.display()
         );
         let ca_cert = load_ca_cert(&self.ca_cert)?;
-        let ca_key = KeyPair::import_from_pkcs8_pem(&fs::read_to_string(&self.ca_key)?)?;
+        let ca_key = load_key(&self.ca_key)?;
         let ca = CertificateWithPrivateKey::new(ca_cert, ca_key);
 
         let cert_info = cert_info(&self.dn, &key, &self.opts)?;

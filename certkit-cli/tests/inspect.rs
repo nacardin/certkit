@@ -25,6 +25,10 @@ fn write_leaf(dir: &Path) -> std::path::PathBuf {
             "www.example.com",
             "--email",
             "admin@example.com",
+            "--ip",
+            "192.168.1.10",
+            "--ip",
+            "::1",
             "--eku",
             "server-auth",
             "--eku",
@@ -75,6 +79,10 @@ fn inspect_reports_core_fields() {
         text.contains("email:admin@example.com"),
         "email SAN: {text}"
     );
+    assert!(text.contains("IP:192.168.1.10"), "IPv4 SAN: {text}");
+    // IPv6 is rendered canonically and bracketed, so "::1" stays readable
+    // next to the "IP:" prefix.
+    assert!(text.contains("IP:[::1]"), "IPv6 SAN: {text}");
     assert!(text.contains("Extended Key Usage"), "EKU label: {text}");
     assert!(text.contains("serverAuth, clientAuth"), "EKU value: {text}");
     assert!(text.contains("Basic Constraints"), "BC label: {text}");
@@ -188,4 +196,46 @@ fn inspect_reads_der_from_stdin() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("CN=stdin.example.com"), "{text}");
     assert!(text.contains("Ed25519"), "{text}");
+}
+
+/// Extensions certkit has no decoder for should still be named when const-oid
+/// knows the OID, rather than shown as a bare dotted number.
+#[test]
+fn inspect_names_extensions_without_decoders() {
+    // Any real CA certificate carries extensions certkit does not decode.
+    let Some(cert) = std::fs::read_dir("/etc/ssl/certs")
+        .ok()
+        .and_then(|entries| {
+            entries.filter_map(Result::ok).map(|e| e.path()).find(|p| {
+                p.extension().is_some_and(|e| e == "pem")
+                    && std::fs::read_to_string(p).is_ok_and(|s| s.contains("BEGIN CERTIFICATE"))
+            })
+        })
+    else {
+        eprintln!("skipping: no system CA certificates found");
+        return;
+    };
+
+    let out = certkit().arg("cert_info").arg(&cert).output().unwrap();
+    assert!(
+        out.status.success(),
+        "cert_info failed on {}",
+        cert.display()
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    // Every listed extension should carry a name, not a bare OID label.
+    for line in text
+        .lines()
+        .skip_while(|l| !l.starts_with("Extensions:"))
+        .skip(1)
+        .filter(|l| l.starts_with("  "))
+    {
+        let label = line.trim_start().split(':').next().unwrap_or_default();
+        assert!(
+            !label.chars().all(|c| c.is_ascii_digit() || c == '.'),
+            "extension shown as a bare OID in {}: {line}",
+            cert.display()
+        );
+    }
 }

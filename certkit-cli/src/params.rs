@@ -1,8 +1,6 @@
-use anyhow::{Result, anyhow};
-use der::Encode;
-use der::asn1::Ia5String;
-use x509_cert::ext::pkix;
-use x509_cert::ext::pkix::name::GeneralName;
+use std::net::IpAddr;
+
+use anyhow::Result;
 
 use certkit::cert::extensions::{ExtendedKeyUsageOption, SubjectAltName, ToAndFromX509Extension};
 use certkit::cert::params::{CertificateParams, DistinguishedName, ExtensionParam};
@@ -23,7 +21,7 @@ pub fn cert_info(dn: &DnArgs, key: &KeyPair, opts: &CertOptArgs) -> Result<Certi
     let usages: Vec<ExtendedKeyUsageOption> = opts.eku.iter().map(|e| (*e).into()).collect();
 
     let mut extensions = Vec::new();
-    if let Some(san) = build_san(&opts.dns, &opts.email)? {
+    if let Some(san) = build_san(&opts.dns, &opts.email, &opts.ip)? {
         extensions.push(san);
     }
 
@@ -36,29 +34,22 @@ pub fn cert_info(dn: &DnArgs, key: &KeyPair, opts: &CertOptArgs) -> Result<Certi
         .build())
 }
 
-/// certkit's `SubjectAltName` only models DNS names, so we assemble the extension
-/// directly from x509_cert GeneralNames to also carry rfc822 (email) entries.
-fn build_san(dns: &[String], email: &[String]) -> Result<Option<ExtensionParam>> {
-    if dns.is_empty() && email.is_empty() {
+/// Builds the SAN extension from the repeatable `--dns`, `--email` and `--ip`
+/// flags, or `None` when none were given.
+fn build_san(dns: &[String], email: &[String], ip: &[IpAddr]) -> Result<Option<ExtensionParam>> {
+    if dns.is_empty() && email.is_empty() && ip.is_empty() {
         return Ok(None);
     }
 
-    let mut names = Vec::new();
-    for name in dns {
-        let ia5 =
-            Ia5String::try_from(name.clone()).map_err(|_| anyhow!("invalid DNS name: {name}"))?;
-        names.push(GeneralName::DnsName(ia5));
-    }
-    for addr in email {
-        let ia5 = Ia5String::try_from(addr.clone())
-            .map_err(|_| anyhow!("invalid email address: {addr}"))?;
-        names.push(GeneralName::Rfc822Name(ia5));
-    }
+    let san = SubjectAltName {
+        dns_names: dns.to_vec(),
+        email_addresses: email.to_vec(),
+        ip_addresses: ip.to_vec(),
+    };
 
-    let san = pkix::SubjectAltName(names);
     Ok(Some(ExtensionParam {
         oid: SubjectAltName::OID,
         critical: false,
-        value: san.to_der()?,
+        value: san.to_x509_extension_value()?,
     }))
 }

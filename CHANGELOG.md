@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Add `certkit-cli`, a `certkit` binary with `keygen`, `gen_self_signed`, `issue`,
+  and `cert_info` subcommands modelled on Botan's CLI. Generated private keys are
+  written `0600` on Unix.
+
+### Fixed
+
+- `Validity::for_days` now returns `CertKitError::InvalidInput` for periods that
+  cannot be represented, instead of panicking on arithmetic overflow.
+
 ## [0.2.0]
 
 This release focuses on correctness, security, and returning `Result` instead of panicking.

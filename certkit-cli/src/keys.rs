@@ -1,9 +1,8 @@
-use std::fs;
-
 use anyhow::{Result, bail};
 use certkit::key::KeyPair;
 
 use crate::args::{Algorithm, Curve, KeyParams, KeySourceArgs};
+use crate::io::load_key;
 
 pub fn generate(algorithm: Algorithm, params: Option<KeyParams>) -> Result<KeyPair> {
     match algorithm {
@@ -38,10 +37,7 @@ pub fn generate(algorithm: Algorithm, params: Option<KeyParams>) -> Result<KeyPa
 /// Returns `(key, generated)` where `generated` is true when the key was freshly created.
 pub fn key_pair(args: &KeySourceArgs) -> Result<(KeyPair, bool)> {
     match &args.key {
-        Some(path) => Ok((
-            KeyPair::import_from_pkcs8_pem(&fs::read_to_string(path)?)?,
-            false,
-        )),
+        Some(path) => Ok((load_key(path)?, false)),
         None => Ok((generate(args.algorithm, args.params)?, true)),
     }
 }

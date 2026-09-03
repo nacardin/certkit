@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
@@ -115,7 +116,8 @@ pub struct KeySourceArgs {
     #[arg(long)]
     pub key: Option<PathBuf>,
     /// Write a freshly generated private key here instead of stdout.
-    #[arg(long)]
+    /// Meaningless with `--key`, which supplies a key that already exists.
+    #[arg(long, conflicts_with = "key")]
     pub key_out: Option<PathBuf>,
 }
 
@@ -127,6 +129,9 @@ pub struct CertOptArgs {
     /// Email (rfc822) Subject Alternative Name (repeatable).
     #[arg(long)]
     pub email: Vec<String>,
+    /// IP address Subject Alternative Name, v4 or v6 (repeatable).
+    #[arg(long)]
+    pub ip: Vec<IpAddr>,
     /// Extended Key Usage purpose (repeatable).
     #[arg(long = "eku", value_enum)]
     pub eku: Vec<EkuOpt>,
