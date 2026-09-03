@@ -24,6 +24,10 @@ Add this to your `Cargo.toml`:
 certkit = "0.2"
 ```
 
+## CLI
+
+[`certkit-cli`](certkit-cli/) is a CLI that installs a `certkit` binary for generating keys and certificates. See its [README](certkit-cli/README.md) for usage.
+
 ## Cargo features
 
 Each cryptographic algorithm is behind its own feature. All are enabled by default, so the default build is unchanged:
