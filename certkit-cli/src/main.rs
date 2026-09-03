@@ -49,7 +49,7 @@ fn main() {
 
     let cli = Cli::parse();
     if let Err(err) = run(cli) {
-        eprintln!("error: {err}");
+        eprintln!("error: {err:#}");
         process::exit(1);
     }
 }

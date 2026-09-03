@@ -13,16 +13,13 @@ pub(super) fn hex_colons(bytes: &[u8]) -> String {
 
 pub(super) fn format_ip(octets: &[u8]) -> String {
     match octets.len() {
-        4 => octets
-            .iter()
-            .map(u8::to_string)
-            .collect::<Vec<_>>()
-            .join("."),
-        16 => octets
-            .chunks(2)
-            .map(|pair| format!("{:02x}{:02x}", pair[0], pair[1]))
-            .collect::<Vec<_>>()
-            .join(":"),
+        4 => std::net::Ipv4Addr::from(<[u8; 4]>::try_from(octets).expect("4 bytes")).to_string(),
+        // Bracketed so the address separators stay distinguishable from the
+        // "IP:" label prefix ("IP:[::1]" rather than "IP:::1").
+        16 => format!(
+            "[{}]",
+            std::net::Ipv6Addr::from(<[u8; 16]>::try_from(octets).expect("16 bytes"))
+        ),
         _ => hex_colons(octets),
     }
 }
@@ -59,11 +56,14 @@ pub(super) fn describe_oid(oid: ObjectIdentifier) -> String {
     } else if oid == rfc8410::ID_ED_25519 {
         "Ed25519"
     } else {
-        return const_oid::db::DB
-            .by_oid(&oid)
-            .map_or_else(|| oid.to_string(), str::to_string);
+        return named_oid(oid).unwrap_or_else(|| oid.to_string());
     };
     name.to_string()
+}
+
+/// Looks an OID up in const-oid's database, returning `None` when it is unknown.
+pub(super) fn named_oid(oid: ObjectIdentifier) -> Option<String> {
+    const_oid::db::DB.by_oid(&oid).map(str::to_string)
 }
 
 pub(super) fn join_or_none<S: AsRef<str>>(parts: &[S]) -> String {

@@ -16,7 +16,9 @@ use fmt::{describe_oid, hex_colons};
 #[derive(Serialize)]
 struct ExtReport {
     oid: String,
-    name: &'static str,
+    /// Human-readable extension name, or empty when the OID is unknown to
+    /// both the explicit table and const-oid's database.
+    name: String,
     critical: bool,
     summary: String,
 }
@@ -109,9 +111,9 @@ impl CertReport {
             out.push_str("Extensions:\n");
             for ext in &self.extensions {
                 let label = if ext.name.is_empty() {
-                    ext.oid.clone()
+                    &ext.oid
                 } else {
-                    ext.name.to_string()
+                    &ext.name
                 };
                 let crit = if ext.critical { " (critical)" } else { "" };
                 out.push_str(&format!("  {label}{crit}: {}\n", ext.summary));

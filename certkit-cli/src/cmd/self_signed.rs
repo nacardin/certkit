@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Args;
-use time::{Duration, OffsetDateTime};
 
 use certkit::cert::Certificate;
+use certkit::cert::params::Validity;
 
 use crate::args::{CertOptArgs, DnArgs, KeySourceArgs};
 use crate::io::{emit, guard_stdout_clash};
@@ -30,12 +30,12 @@ impl SelfSignedOpt {
         )?;
 
         let cert_info = cert_info(&self.dn, &key, &self.opts)?;
-        let now = OffsetDateTime::now_utc();
+        let validity = Validity::for_days(self.opts.days)?;
         let cert = Certificate::new_self_signed_with_expiration(
             &cert_info,
             &key,
-            now,
-            now + Duration::days(self.opts.days),
+            validity.not_before().to_system_time().into(),
+            validity.not_after().to_system_time().into(),
         )?;
 
         emit(

@@ -232,12 +232,24 @@ impl Validity {
     /// * `days` - The number of days for the validity period.
     ///
     /// # Errors
-    /// Returns [`CertKitError::EncodingError`] if the resulting timestamps
-    /// cannot be represented as ASN.1 time values (practically infallible
-    /// for real-world dates).
+    /// Returns [`CertKitError::InvalidInput`] if `days` is so large that the
+    /// resulting instant is not representable, or
+    /// [`CertKitError::EncodingError`] if the timestamps cannot be encoded as
+    /// ASN.1 time values (practically infallible for real-world dates).
     pub fn for_days(days: i64) -> Result<Self, CertKitError> {
         let now = OffsetDateTime::now_utc();
-        Self::new(now, now + Duration::days(days))
+        // Both the `Duration` construction and the addition overflow by
+        // panicking, so each step is checked explicitly.
+        let out_of_range = || {
+            CertKitError::InvalidInput(format!(
+                "validity period of {days} days is out of the representable range"
+            ))
+        };
+        let seconds = days.checked_mul(86_400).ok_or_else(out_of_range)?;
+        let not_after = now
+            .checked_add(Duration::seconds(seconds))
+            .ok_or_else(out_of_range)?;
+        Self::new(now, not_after)
     }
 
     /// Returns the start of the validity period, as a pre-encoded
@@ -375,6 +387,29 @@ mod tests {
         // An explicitly empty `OU` is treated the same as `None` and dropped.
         let x509_name = dn.as_x509_name().unwrap();
         assert_eq!(x509_name.to_string(), "CN=leaf.example.com,C=US");
+    }
+
+    #[test]
+    fn for_days_rejects_unrepresentable_periods_instead_of_panicking() {
+        // Overflows the `OffsetDateTime` range.
+        let err = Validity::for_days(999_999_999).unwrap_err();
+        assert!(
+            matches!(err, CertKitError::InvalidInput(_)),
+            "expected InvalidInput, got {err:?}"
+        );
+        // Overflows the `Duration` construction itself (days * 86_400 > i64).
+        let err = Validity::for_days(i64::MAX).unwrap_err();
+        assert!(
+            matches!(err, CertKitError::InvalidInput(_)),
+            "expected InvalidInput, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn for_days_accepts_ordinary_periods() {
+        let validity = Validity::for_days(365).expect("365 days is representable");
+        let days = validity.duration().as_secs() / 86_400;
+        assert_eq!(days, 365);
     }
 
     #[test]

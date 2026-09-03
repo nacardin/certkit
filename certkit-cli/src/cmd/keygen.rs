@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Args;
 
 use crate::args::{Algorithm, KeyParams};
-use crate::io::write_bytes;
+use crate::io::write_secret_bytes;
 use crate::keys::generate;
 
 #[derive(Args)]
@@ -24,7 +24,7 @@ impl KeygenOpt {
     pub fn execute(&self) -> Result<()> {
         let key = generate(self.algorithm, self.params)?;
         let pem = key.encode_private_key_pem()?;
-        write_bytes(&self.out, pem.as_bytes())?;
+        write_secret_bytes(&self.out, pem.as_bytes())?;
         if let Some(path) = &self.out {
             log::info!("wrote private key to {}", path.display());
         }

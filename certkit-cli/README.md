@@ -28,6 +28,7 @@ common name is positional, as in Botan:
 ```sh
 certkit gen_self_signed example.com \
   --dns example.com --dns www.example.com \
+  --ip 192.168.1.10 --ip ::1 \
   --email admin@example.com \
   --eku server-auth \
   --days 365 \
@@ -56,3 +57,21 @@ cat cert.pem | certkit cert_info -
 ```
 
 Run `certkit <command> --help` for the full set of options.
+
+## Scope
+
+This is a small tool covering the common "make me a key and a certificate" cases.
+**Not** supported yet:
+
+- **Certificate signing requests** — no equivalent of Botan's `gen_pkcs10` /
+  `sign_cert`. Keys and certificates are always generated together, so certkit
+  cannot currently act as a CA for a CSR produced elsewhere.
+- **Explicit key usage** — the key usage extension is derived from `--ca` and the
+  key algorithm; it cannot be set directly.
+- **Path length constraints** — `--ca` always issues a CA without a `pathLenConstraint`,
+  though the library's `CertificateParams` supports `max_path_length`.
+- **Absolute validity dates** — validity is `--days` from now; there is no
+  `--not-before` / `--not-after`.
+
+`certkit cert_info` prints certificates but does **not** verify them. The library
+builds and parses X.509; it does not do signature or path validation. 

@@ -4,7 +4,7 @@ use x509_cert::ext::pkix;
 use x509_cert::ext::pkix::name::GeneralName;
 
 use super::ExtReport;
-use super::fmt::{UNDECODABLE, describe_oid, format_ip, hex_colons, join_or_none};
+use super::fmt::{UNDECODABLE, describe_oid, format_ip, hex_colons, join_or_none, named_oid};
 
 /// Each arm matches via `AssociatedOid::OID` so the OID and its decoder stay in
 /// sync. `ObjectIdentifier` isn't usable in match patterns, hence the if/else chain.
@@ -24,7 +24,14 @@ pub(super) fn describe_extension(ext: &x509_cert::ext::Extension) -> ExtReport {
     } else if oid == pkix::AuthorityKeyIdentifier::OID {
         ("Authority Key Identifier", aki_summary(value))
     } else {
+        // No structured decoder: still name the OID when const-oid knows it
+        // (authorityInfoAccess, cRLDistributionPoints, certificatePolicies, ...).
         ("", format!("{} bytes", value.len()))
+    };
+    let name = if name.is_empty() {
+        named_oid(oid).unwrap_or_default()
+    } else {
+        name.to_string()
     };
     ExtReport {
         oid: oid.to_string(),
